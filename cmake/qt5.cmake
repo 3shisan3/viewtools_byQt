@@ -24,6 +24,7 @@ set(CMAKE_AUTOMOC ON)
 # 设置资源文件
 file(GLOB_RECURSE PROJECT_QRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/res/res.qrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/ui.qrc
 )
 
 # 添加资源文件

@@ -31,9 +31,11 @@ file(GLOB PROJECT_HEADERS
 # 包含头文件
 include_directories(${PROJECT_HEADERS})
 
+# 源码目录
+set(SOURCE_CODE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # 指定源码
 file(GLOB_RECURSE PROJECT_SRCS
-
+    ${SOURCE_CODE_DIR}/main.cpp
 )
 
 # 指定库文件搜索路径
@@ -49,7 +51,7 @@ endif()
 
 #依赖库
 target_link_libraries(${PROJECT_NAME}
-
+    ${QT_DEPEND_LIBS}
 )
 
 # 安装
