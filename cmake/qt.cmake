@@ -29,8 +29,12 @@ list(APPEND CMAKE_PREFIX_PATH ${QT_PREFIX_PATH})
 # 若要使用 Qt 的 UI 相关功能，需开启，否则无法找到对应 ui_xxx.h
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-# 设置 MOC，如果要使用信号槽，则必须开启该功能
+# 设置MOC，如果要使用信号槽，则必须开启该功能
 set(CMAKE_AUTOMOC ON)
+# 设置UIC，将.ui 文件（Qt Designer 生成的界面文件）转换为对应的 C++ 头文件
+set(CMAKE_AUTOUIC ON)
+# 设置RCC，将.qrc 文件（Qt 资源文件）编译为 C++ 代码
+set(CMAKE_AUTORCC ON)
 
 # 设置资源文件
 file(GLOB_RECURSE PROJECT_QRCS
@@ -46,8 +50,7 @@ endif()
 
 # 设置 UI 文件
 file(GLOB_RECURSE PROJECT_UIS
-    ${CMAKE_CURRENT_SOURCE_DIR}/ui/about/*.ui
-    ${CMAKE_CURRENT_SOURCE_DIR}/ui/shortcut/*.ui
+    
 )
 
 # 添加 UI 文件

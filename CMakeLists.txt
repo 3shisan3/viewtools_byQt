@@ -19,6 +19,7 @@ set(3RD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty)
 
 # 导入配置
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/qt5.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/option.cmake)
 
 message(STATUS "CMAKE_BUILD_TYPE:${CMAKE_BUILD_TYPE}")
 
@@ -29,6 +30,7 @@ set(SOURCE_CODE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 file(GLOB PROJECT_HEADERS
     ${3RD_DIR}/include
 
+    ${SOURCE_CODE_DIR}
     ${SOURCE_CODE_DIR}/core
 )
 
@@ -37,7 +39,8 @@ include_directories(${PROJECT_HEADERS})
 
 # 指定源码
 file(GLOB_RECURSE PROJECT_SRCS
-    ${SOURCE_CODE_DIR}/main.cpp
+    # ${SOURCE_CODE_DIR}/main.cpp
+    ${SOURCE_CODE_DIR}/*.cpp
 )
 
 # 指定库文件搜索路径

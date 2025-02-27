@@ -28,8 +28,7 @@ qt6_add_resources(PROJECT_MOC_QRCS ${PROJECT_QRCS})
 
 # 设置ui文件
 file(GLOB_RECURSE PROJECT_UIS
-    ${CMAKE_CURRENT_SOURCE_DIR}/ui/about/*.ui
-    ${CMAKE_CURRENT_SOURCE_DIR}/ui/shortcut/*.ui
+    
 )
 
 # 添加ui文件

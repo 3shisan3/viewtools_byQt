@@ -1,15 +1,29 @@
 /* 测试范例样式 */
-QMainWindow {
-    background-color: #2E3440;
-    color: #D8DEE9;
+QWidget {
+    background-color: #f5f5f5;
 }
+
 QPushButton {
-    background-color: #4C566A;
-    color: #ECEFF4;"
-    border: 2px solid #81A1C1;
+    background-color: #2196F3;
+    color: white;
     border-radius: 5px;
     padding: 10px;
+    min-width: 100px;
 }
+
 QPushButton:hover {
-    background-color: #81A1C1;"
+    background-color: #1976D2;
+}
+
+QLineEdit {
+    padding: 8px;
+    border: 2px solid #2196F3;
+    border-radius: 5px;
+    font-size: 14px;
+}
+
+QLabel {
+    color: #333;
+    font-size: 18px;
+    qproperty-alignment: AlignCenter;
 }
