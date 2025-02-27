@@ -1,23 +1,28 @@
 #include <QApplication>
-#include <QDebug>  
+#include <QDebug>
 #include <QFile>
 #include <QMainWindow>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
-void loadStyleSheetFromResource(const QString &path, QWidget *widget) {
+void loadStyleSheetFromResource(const QString &path, QWidget *widget)
+{
     QFile styleFile(path);
-    if (styleFile.open(QFile::ReadOnly)) {
+    if (styleFile.open(QFile::ReadOnly))
+    {
         QString styleSheet = QLatin1String(styleFile.readAll());
-        widget->setStyleSheet(styleSheet);  // 全局应用样式表
+        widget->setStyleSheet(styleSheet); // 全局应用样式表
         styleFile.close();
-    } else {
+    }
+    else
+    {
         qWarning() << "Failed to open style sheet resource:" << path;
     }
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
     QApplication app(argc, argv);
 
     QMainWindow window;
