@@ -13,7 +13,6 @@ list(APPEND CMAKE_PREFIX_PATH ${QT_PREFIX_PATH})
 find_package(Qt5Core          REQUIRED)
 find_package(Qt5Widgets       REQUIRED)
 find_package(Qt5Gui           REQUIRED)
-find_package(Qt5OpenGL        REQUIRED)
 # find_package(Qt5 COMPONENTS Core Gui OpenGL Quick QuickWidgets Widgets REQUIRED)
 
 # 若要使用qt的ui相关功能，需开启，否则无找到对应ui_xxx.h
@@ -54,7 +53,6 @@ set(QT_DEPEND_LIBS
     Qt5::Core
     Qt5::Widgets
     Qt5::Gui
-    Qt5::OpenGL
 )
 
 # 程序打包时安装的库集合

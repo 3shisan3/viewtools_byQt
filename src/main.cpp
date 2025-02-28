@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QMainWindow>
 
+#include "ability_manager.h"
 #ifdef EXAMPLE_ON
 #include "view/window/example/example.h"
 #endif
