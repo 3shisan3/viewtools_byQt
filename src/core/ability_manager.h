@@ -43,23 +43,5 @@ static QImage loadSvgToImage(const QString &svgPath, const QSize &size)
 #endif
 
 #ifdef OPENGL_ENABLE
-#include <QOpenGLTexture>
-
-// 将 QImage 转换为 OpenGL 纹理
-static GLuint createTextureFromImage(const QImage &image)
-{
-    if (image.isNull())
-    {
-        qWarning() << "Invalid image provided for texture creation.";
-        return 0;
-    }
-
-    // 未引用系统opengl库场景，需要QOpenGLContext::currentContext()获取且确保上下文有效，加载OpenGL函数指针；或者添加入参外部传入
-    // 使用 QOpenGLTexture 创建纹理
-    QOpenGLTexture *texture = new QOpenGLTexture(image);
-    texture->setMinificationFilter(QOpenGLTexture::Linear);
-    texture->setMagnificationFilter(QOpenGLTexture::Linear);
-
-    return texture->textureId();
-}
+#include "factory/opengl/texturemanager.h"
 #endif
