@@ -12,20 +12,13 @@ file(GLOB LIB_FILES
 install(FILES ${LIB_FILES} DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
 
 # 需要安装的qt库
-set(QT_LIBS
-    libicudata.so.56
+list(APPEND QT_LIBS
     libicui18n.so.56
     libicuuc.so.56
+    libicudata.so.56
     libQt5Core.so.5
-    libQt5DBus.so.5
     libQt5Gui.so.5
-    libQt5Network.so.5
-    libQt5OpenGL.so.5
-    libQt5Positioning.so.5
-    libQt5Qml.so.5
-    libQt5Svg.so.5
     libQt5Widgets.so.5
-    libQt5XcbQpa.so.5
 )
 
 # 创建文件夹

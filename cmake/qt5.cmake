@@ -14,8 +14,6 @@ find_package(Qt5Core          REQUIRED)
 find_package(Qt5Widgets       REQUIRED)
 find_package(Qt5Gui           REQUIRED)
 find_package(Qt5OpenGL        REQUIRED)
-find_package(Qt5Quick         REQUIRED)
-find_package(Qt5QuickWidgets  REQUIRED)
 # find_package(Qt5 COMPONENTS Core Gui OpenGL Quick QuickWidgets Widgets REQUIRED)
 
 # 若要使用qt的ui相关功能，需开启，否则无找到对应ui_xxx.h
@@ -57,6 +55,7 @@ set(QT_DEPEND_LIBS
     Qt5::Widgets
     Qt5::Gui
     Qt5::OpenGL
-    Qt5::Quick
-    Qt5::QuickWidgets
 )
+
+# 程序打包时安装的库集合
+set(QT_LIBS "")
