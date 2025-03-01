@@ -11,6 +11,7 @@ Version history
 [序号]    |   [修改日期]  |   [修改者]   |   [修改内容]
 
 *****************************************************************/
+#ifdef EXAMPLE_ON   // qt中继承qobject；使用相关宏的情况下moc会加入生成文件，故功能未开启此头文件仍会被引用，导致报错
 
 #ifndef _EXAMPLEWINDOW_H
 #define _EXAMPLEWINDOW_H
@@ -37,3 +38,5 @@ private:
 };
 
 #endif // _EXAMPLEWINDOW_H
+
+#endif // EXAMPLE_ON

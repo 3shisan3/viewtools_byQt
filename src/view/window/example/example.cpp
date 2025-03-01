@@ -1,3 +1,5 @@
+#ifdef EXAMPLE_ON
+
 #include <QLineEdit>
 #include <QLabel>
 #include <QVBoxLayout>
@@ -67,3 +69,5 @@ void ExampleWindow::showQssWindow()
     qssWindow->show();
     this->hide();
 }
+
+#endif
