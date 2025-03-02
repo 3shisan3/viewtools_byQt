@@ -6,6 +6,11 @@
 #include "view/window/example/example.h"
 #endif
 
+void initModule()
+{
+    
+}
+
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
@@ -14,7 +19,7 @@ int main(int argc, char *argv[])
     ExampleWindow window;
 #else
     QMainWindow window;
-    window.setWindowTitle("viewtools");
+    window.setWindowTitle(QObject::tr("viewtools"));
     window.setMinimumSize(800, 600);
 #endif
 

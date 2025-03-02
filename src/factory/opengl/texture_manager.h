@@ -1,5 +1,5 @@
 /*****************************************************************
-File:        texturemanager.h
+File:        texture_manager.h
 Version:     1.0
 Author:
 start date:

@@ -1,5 +1,7 @@
 <RCC>
     <qresource prefix="/ui">
+        <file>i18n/example_zh_CN.qm</file>
+
         <file>qml/example.qml</file>
 
         <file>style_sheet/example.qss</file>

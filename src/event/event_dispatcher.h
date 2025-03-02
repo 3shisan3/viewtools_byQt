@@ -10,8 +10,8 @@ Version history
 
 *****************************************************************/
 
-#ifndef _EVENT_DISPATCHER_H_
-#define _EVENT_DISPATCHER_H_
+#ifndef EVENT_DISPATCHER_H_
+#define EVENT_DISPATCHER_H_
 
 #include <QObject>
 
@@ -32,6 +32,10 @@ protected:
     explicit EventDispatcher(QObject * parent = nullptr);
 
 signals:
+    // 切换语言信号                    window->manager
+    void switchLanguage(QString targetName);
+    // 界面操作加载新的语言包           window->manager
+    void loadLanguageBag(QString path);
     
 };
 

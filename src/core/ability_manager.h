@@ -43,5 +43,5 @@ static QImage loadSvgToImage(const QString &svgPath, const QSize &size)
 #endif
 
 #ifdef OPENGL_ENABLE
-#include "factory/opengl/texturemanager.h"
+#include "factory/opengl/texture_manager.h"
 #endif

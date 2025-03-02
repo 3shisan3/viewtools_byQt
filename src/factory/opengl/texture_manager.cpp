@@ -1,6 +1,6 @@
 #ifdef OPENGL_ENABLE
 
-#include "texturemanager.h"
+#include "texture_manager.h"
 
 #include <QDebug>
 #include <QVector>
