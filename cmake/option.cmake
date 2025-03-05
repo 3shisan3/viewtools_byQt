@@ -40,11 +40,11 @@ option(ENABLE_OPENGL "ability to use OpenGL related rendering functions" ON)
 if (ENABLE_OPENGL)
     add_definitions(-DOPENGL_ENABLE)
 
-    # find_package(OpenGL           REQUIRED)
+    find_package(OpenGL           REQUIRED)
     find_package(Qt5OpenGL        REQUIRED)
     list(APPEND QT_DEPEND_LIBS
         Qt5::OpenGL
-        # OpenGL::GL   # 系统的 OpenGL 库
+        OpenGL::GL   # 系统的 OpenGL 库
     )
     list(APPEND QT_LIBS
         libQt5OpenGL.so.5
