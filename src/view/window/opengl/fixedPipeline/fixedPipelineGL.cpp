@@ -1,13 +1,17 @@
 #include "fixedPipelineGL.h"
 
 #include <cmath>
-#include <GL/gl.h>
+#include <GL/glu.h>
 #include <QPainter>
+
+#define PICKSIZE 1024
+#define PICK_TOL 8          // 拾取阈值（可读取配置文件，依据当前绘制要素，动态变化）
 
 SsFixedPipelineGLWidgetBase::SsFixedPipelineGLWidgetBase(QWidget * parent)
     : QOpenGLWidget(parent)
     , m_viewCenter_(0.0f, 0.0f, 0.0f)     // 初始中心点为 (0,0)
     , m_viewCoordFactor_(1.0f)            // 初始系数为1，和逻辑坐标系（QPointF)比例直接对应
+    , m_isPickStatus_(false)
 {
     // 在构造函数中设置 OpenGL 上下文格式
     QSurfaceFormat format;
@@ -116,6 +120,11 @@ void SsFixedPipelineGLWidgetBase::setViewRect(const QVector3D &topLeft, const QV
     m_viewCenter_.setZ((topLeft.z() + bottomRight.z()) / 2);
 }
 
+bool SsFixedPipelineGLWidgetBase::isPickMode() const
+{
+    return m_isPickStatus_;
+}
+
 void SsFixedPipelineGLWidgetBase::drawPoint(const QVector3D &point, float size, const QColor &color)
 {
     glPointSize(size);
@@ -195,4 +204,66 @@ void SsFixedPipelineGLWidgetBase::drawTexture(const QVector2D &position, const Q
     glEnd();
 
     glDisable(GL_TEXTURE_2D);
+}
+
+void SsFixedPipelineGLWidgetBase::onMousePick(const QPointF &pos)
+{
+    /* 初始化阶段 */
+    GLuint pickBuffer[PICKSIZE] = {0};              // 创建一个保存选择结果的数组
+    GLint numPicks = 0;
+    GLint vp[4] = {0};
+    
+    glGetIntegerv(GL_VIEWPORT, vp);                 // 获取当前视口参数(vp[2]=width, vp[3]=height)
+    glSelectBuffer(PICKSIZE, pickBuffer);           // 设置选择缓冲区
+
+    // 复用 resizeGL 中的投影计算逻辑
+    float width = vp[2] / m_viewCoordFactor_;
+    float height = vp[3] / m_viewCoordFactor_;
+    float left = m_viewCenter_.x() - width / 2;
+    float right = m_viewCenter_.x() + width / 2;
+    float bottom = m_viewCenter_.y() - height / 2;
+    float top = m_viewCenter_.y() + height / 2;
+
+    /* 选择模式配置 */
+    glRenderMode(GL_SELECT);                        // 激活选择模式
+    glInitNames();                                  // 初始化名字堆栈
+    glPushName(0);                                  // 在名字栈中放入一个初始化名字，这里为‘0’ (防止空栈错误)
+
+    m_isPickStatus_ = true;
+
+    /* 投影矩阵操作 */
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();                                 // 保存原有投影矩阵
+    glLoadIdentity();
+
+    glOrtho(left, right, bottom, top, -1.0, 1.0);   // 先应用原始投影矩阵
+    gluPickMatrix(GLdouble(pos.x()), GLdouble(vp[3] - pos.y()), PICK_TOL, PICK_TOL, vp);    // 叠加拾取矩阵
+
+    /* 绘制场景 */
+    paintGL();                                      // 触发绘制（夹取的一帧）(update()同样)
+
+    /* 结果处理 */
+    glMatrixMode(GL_PROJECTION);                    // 恢复矩阵
+    glPopMatrix();                                  // 返回正常的投影变换 
+
+    numPicks = glRenderMode(GL_RENDER);             // 从选择模式返回正常模式,该函数返回选择到对象的个数
+    m_isPickStatus_ = false;
+
+    /* 拾取结果pickBuffer解析，通过glPushName存入的名字来映射到具体要素 */
+    /* // 示例：两个命中记录
+        pickBuffer[] = {
+            // 第一个命中记录
+            2,          // 名称堆栈深度（n=2）
+            minDepth1,  // 最小深度
+            maxDepth1,  // 最大深度
+            name1_1,    // 名称1（堆栈底部名称）
+            name1_2,    // 名称2（堆栈顶部名称）
+
+            // 第二个命中记录
+            1,          // 名称堆栈深度（n=1）
+            minDepth2,  // 最小深度
+            maxDepth2,  // 最大深度
+            name2       // 名称
+        };
+     */
 }

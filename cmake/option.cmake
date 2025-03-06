@@ -45,6 +45,7 @@ if (ENABLE_OPENGL)
     list(APPEND QT_DEPEND_LIBS
         Qt5::OpenGL
         OpenGL::GL   # 系统的 OpenGL 库
+        OpenGL::GLU
     )
     list(APPEND QT_LIBS
         libQt5OpenGL.so.5

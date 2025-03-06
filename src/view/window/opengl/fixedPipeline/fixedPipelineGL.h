@@ -41,6 +41,10 @@ public:
     // 功能同上
     void setViewRect(const QVector3D &topLeft, const QVector3D &bottomRight);
 
+    // 当前是否在拾取状态（外部查询，便于给绘制要素glPushName)
+    bool isPickMode() const;
+
+
     /* 基础绘制接口封装，入参的点坐标系，依赖于上下文中，当前处理的什么矩阵(默认模型视图矩阵--模型坐标系=世界坐标系) */
 
     // 绘制点
@@ -72,11 +76,16 @@ protected:
     // void mousePressEvent(QMouseEvent* event) override;
     // void mouseMoveEvent(QMouseEvent* event) override;
 
+    //拾取
+    virtual void onMousePick(const QPointF &pos);
+
 private:
     QColor m_backgroundColor_;   // 背景颜色
     QVector3D m_viewCenter_;     // 视图中心点（世界坐标系）
     // 存在坐标系转换时每个方向转换的比例不一样的情况，暂不考虑
     float m_viewCoordFactor_;    // 世界坐标系转界面坐标系的系数
+
+    bool m_isPickStatus_;        // 处于拾取状体
 
     QVector3D m_lastviewCenter_; // 记录前一次视图中心点
     float m_wheelZoomFactor_;    // 鼠标缩放系数
