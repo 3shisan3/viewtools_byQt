@@ -10,8 +10,8 @@ Version history
 
 *****************************************************************/
 
-#ifndef _TEXTURE_MANAGER_H_
-#define _TEXTURE_MANAGER_H_
+#ifndef TEXTURE_MANAGER_H_
+#define TEXTURE_MANAGER_H_
 
 #include <QHash>
 #include <QOpenGLTexture>
@@ -44,4 +44,4 @@ private:
     QHash<QString, QOpenGLTexture*> m_textures; // 纹理名称到ID的映射
 };
 
-#endif //_TEXTURE_MANAGER_H_
+#endif // TEXTURE_MANAGER_H_
