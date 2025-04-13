@@ -38,11 +38,11 @@ SsTranslationManager::SsTranslationManager(QObject *parent)
     connect(&event, &EventDispatcher::loadLanguageBag, this, &SsTranslationManager::load);
 }
 
-void SsTranslationManager::getLanguages(QList<QString> &mapLanguage) const
+QList<QString> SsTranslationManager::getLanguages() const
 {
     QMutexLocker lock(&m_mutex_);
 
-    mapLanguage = m_mapLanguage_.keys();
+    return m_mapLanguage_.keys();
 }
 
 QString SsTranslationManager::getCurrentLanguage() const

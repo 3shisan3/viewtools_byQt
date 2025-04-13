@@ -1,4 +1,5 @@
 #include "i18nwindow.h"
+
 #include "utils/composite_translator.h"
 
 SsI18nWindow::SsI18nWindow(const QString &context, QWidget *parent)

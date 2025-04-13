@@ -6,17 +6,19 @@
 #include <QFile>
 
 #include "example.h"
+#include "data/translation_manager.h"
+#include "event/event_dispatcher.h"
 
 ExampleWindow::ExampleWindow(QWidget *parent)
     : QWidget(parent)
 {
     // 设置主窗口
-    setWindowTitle("界面切换演示");
+    setWindowTitle(tr("Interface switching demo"));
     resize(300, 200);
 
     // 创建按钮
-    qmlBtn = new QPushButton("打开QML界面");
-    qssBtn = new QPushButton("打开QSS界面");
+    qmlBtn = new QPushButton(tr("open qml window"));
+    qssBtn = new QPushButton(tr("open qss window"));
 
     // 布局
     QVBoxLayout *layout = new QVBoxLayout;
@@ -27,6 +29,10 @@ ExampleWindow::ExampleWindow(QWidget *parent)
     // 连接信号槽
     connect(qmlBtn, &QPushButton::clicked, this, &ExampleWindow::showQmlWindow);
     connect(qssBtn, &QPushButton::clicked, this, &ExampleWindow::showQssWindow);
+
+    // 获取测试使用的语言包名，并去进行选择
+    QString languageName = SingletonTemplate<SsTranslationManager>::getSingletonInstance().getLanguages().back();
+    emit SingletonTemplate<EventDispatcher>::getSingletonInstance().switchLanguage(languageName);
 }
 
 void ExampleWindow::showQmlWindow()

@@ -2,7 +2,6 @@
 #define I18NWINDOW_H
 
 #include <QWidget>
-#include <QTranslator>
 #include <QEvent>
 #include <QCoreApplication>
 #include <QApplication>

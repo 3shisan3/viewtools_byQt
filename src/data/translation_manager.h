@@ -28,7 +28,7 @@ public:
     friend SingletonTemplate<SsTranslationManager>;
 
     // 获取语言包列表（供语言切换控件使用）
-    void getLanguages(QList<QString>& mapLanguage) const;
+    QList<QString> getLanguages() const;
 
     // 获取当前使用的语言
     QString getCurrentLanguage() const;

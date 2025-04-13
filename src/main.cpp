@@ -5,15 +5,20 @@
 #ifdef EXAMPLE_ON
 #include "view/window/example/example.h"
 #endif
+#include "data/settings_manager.h"
+#include "data/translation_manager.h"
 
 void initModule()
 {
-    
+    (void) SingletonTemplate<SsSettingsManager>::getSingletonInstance();
+    (void) SingletonTemplate<SsTranslationManager>::getSingletonInstance();
 }
 
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+
+    initModule();
 
 #ifdef EXAMPLE_ON
     ExampleWindow window;
