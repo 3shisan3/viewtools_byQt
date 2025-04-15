@@ -5,20 +5,20 @@
 #include <QPainter>
 
 #define PICKSIZE 1024
-#define PICK_TOL 8          // 拾取阈值（可读取配置文件，依据当前绘制要素，动态变化）
+#define PICK_TOL 8                                                  // 拾取阈值（可读取配置文件，依据当前绘制要素，动态变化）
 
 SsFixedPipelineGLWidgetBase::SsFixedPipelineGLWidgetBase(QWidget * parent)
     : QOpenGLWidget(parent)
-    , m_viewCenter_(0.0f, 0.0f, 0.0f)     // 初始中心点为 (0,0)
-    , m_viewCoordFactor_(1.0f)            // 初始系数为1，和逻辑坐标系（QPointF)比例直接对应
+    , m_viewCenter_(0.0f, 0.0f, 0.0f)                               // 初始中心点为 (0,0)
+    , m_viewCoordFactor_(1.0f)                                      // 初始系数为1，和逻辑坐标系（QPointF)比例直接对应
     , m_isPickStatus_(false)
 {
     // 在构造函数中设置 OpenGL 上下文格式
     QSurfaceFormat format;
-    format.setVersion(2, 1);                   // OpenGL 2.1
-    format.setProfile(QSurfaceFormat::CompatibilityProfile); // 兼容模式
-    format.setSamples(4); // 启用4x MSAA
-    setFormat(format); // 关键：为当前 widget 设置格式
+    format.setVersion(2, 1);                                        // OpenGL 2.1
+    format.setProfile(QSurfaceFormat::CompatibilityProfile);        // 兼容模式
+    format.setSamples(4);                                           // 启用4x MSAA
+    setFormat(format);                                              // 关键：为当前 widget 设置格式
 
 
 }
@@ -37,7 +37,7 @@ void SsFixedPipelineGLWidgetBase::initializeGL()
 
     // 开启深度测试&指定深度测试算法（这样绘制不会依赖先后顺序）
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL); // 默认值为GL_LESS，在开启反走样后无法正常的对混合后的锯齿进行深度测试
+    glDepthFunc(GL_LEQUAL);                                         // 默认值为GL_LESS，在开启反走样后无法正常的对混合后的锯齿进行深度测试
 
     // 开混合模式贴图&指定混合算法（反走样依赖该选项，半透明纹理的正常显示也依赖该选项）
     glEnable(GL_BLEND);
@@ -60,17 +60,17 @@ void SsFixedPipelineGLWidgetBase::resizeGL(int w, int h)
     float bottom = m_viewCenter_.y() - height / 2;
     float top = m_viewCenter_.y() + height / 2;
 
-    glMatrixMode(GL_PROJECTION);    // 切换投影矩阵，用于后续设置视图的投影方式（如正交投影或透视投影）
+    glMatrixMode(GL_PROJECTION);                                    // 切换投影矩阵，用于后续设置视图的投影方式（如正交投影或透视投影）
     glLoadIdentity();
     glOrtho(left, right, bottom, top, -1.0, 1.0);
-    glMatrixMode(GL_MODELVIEW);     // 切换模型视图矩阵，用于设置物体的变换（如平移、旋转、缩放）
+    glMatrixMode(GL_MODELVIEW);                                     // 切换模型视图矩阵，用于设置物体的变换（如平移、旋转、缩放）
 }
 
 void SsFixedPipelineGLWidgetBase::paintGL()
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    glLoadIdentity();
+    glLoadIdentity();                                               // 重置为单位矩阵
 
     /* 添加绘制代码 */
 }

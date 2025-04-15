@@ -119,7 +119,8 @@ void SsTranslationManager::change(const QString& target)
         SingletonTemplate<SsSettingsManager>::getSingletonInstance().setValue("language", m_curLanguage_);
     }
 
-    // todo 修改完成，增加信号通知
+    // 触发所有窗口重新翻译 (QApplication::sendEvent(window, event);指定控件)
+    QApplication::sendEvent(QApplication::instance(), new QEvent(QEvent::LanguageChange));
 }
 
 bool SsTranslationManager::loadFile(const QFileInfo &file)

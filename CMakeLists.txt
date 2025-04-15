@@ -26,16 +26,13 @@ message(STATUS "CMAKE_BUILD_TYPE:${CMAKE_BUILD_TYPE}")
 # 源码目录
 set(SOURCE_CODE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-#指定包含头文件
-file(GLOB PROJECT_HEADERS
+# 指定包含头文件
+include_directories(
     ${3RD_DIR}/include
 
     ${SOURCE_CODE_DIR}
     ${SOURCE_CODE_DIR}/core
 )
-
-# 包含头文件
-include_directories(${PROJECT_HEADERS})
 
 # 指定源码
 file(GLOB_RECURSE PROJECT_SRCS
