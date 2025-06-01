@@ -1,5 +1,9 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.10)
 
+# 导入配置
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/option.cmake)
+
+# 设置项目名
 project(viewtools)
 
 # 设置默认的编译类型
@@ -8,8 +12,10 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # 指定编译器
-set(CMAKE_CXX_FLAGS "-std=c++11 -fpermissive -pthread")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wl,-rpath=./:./lib:./depend/:./depend/plugins/:./depend/lib")
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# 禁用编译器特有的扩展
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # 指定输出目录
 set(EXECUTABLE_OUTPUT_PATH ${CMAKE_CURRENT_SOURCE_DIR}/bin)
@@ -17,11 +23,12 @@ set(EXECUTABLE_OUTPUT_PATH ${CMAKE_CURRENT_SOURCE_DIR}/bin)
 # 设置三方库的目录
 set(3RD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty)
 
-# 导入配置
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/qt5.cmake)
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/option.cmake)
+# 引入 qt 相关配置
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/qt.cmake)
 
+# 打印关键信息
 message(STATUS "CMAKE_BUILD_TYPE:${CMAKE_BUILD_TYPE}")
+message(STATUS "DEPEND_LIBS:${QT_DEPEND_LIBS}")
 
 # 源码目录
 set(SOURCE_CODE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)

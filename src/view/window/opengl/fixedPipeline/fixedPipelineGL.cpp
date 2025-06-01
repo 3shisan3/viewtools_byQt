@@ -1,7 +1,20 @@
 #include "fixedPipelineGL.h"
 
-#include <cmath>
+#ifndef APIENTRY
+#  if defined(_WIN32) && !defined(_WIN32_WCE) && !defined(__SCITECH_SNAP__)
+#    define APIENTRY __stdcall
+#  else
+#    define APIENTRY
+#  endif
+#endif
+
+// 根据 Qt 版本选择 GLU 头文件
+#if defined(_WIN32) && QT_VERSION_MAJOR >= 6
+#include <windows.h>  // 确保 Windows.h 在 glu.h 之前包含
+#endif
 #include <GL/glu.h>
+
+#include <cmath>
 #include <QPainter>
 
 #define PICKSIZE 1024
@@ -19,7 +32,6 @@ SsFixedPipelineGLWidgetBase::SsFixedPipelineGLWidgetBase(QWidget * parent)
     format.setProfile(QSurfaceFormat::CompatibilityProfile);        // 兼容模式
     format.setSamples(4);                                           // 启用4x MSAA
     setFormat(format);                                              // 关键：为当前 widget 设置格式
-
 
 }
 
@@ -237,7 +249,13 @@ void SsFixedPipelineGLWidgetBase::onMousePick(const QPointF &pos)
     glLoadIdentity();
 
     glOrtho(left, right, bottom, top, -1.0, 1.0);   // 先应用原始投影矩阵
-    gluPickMatrix(GLdouble(pos.x()), GLdouble(vp[3] - pos.y()), PICK_TOL, PICK_TOL, vp);    // 叠加拾取矩阵
+
+    // 叠加拾取矩阵
+#if QT_VERSION_MAJOR >= 6
+    customPickMatrix(GLdouble(pos.x()), GLdouble(vp[3] - pos.y()), PICK_TOL, PICK_TOL, vp);
+#else
+    gluPickMatrix(GLdouble(pos.x()), GLdouble(vp[3] - pos.y()), PICK_TOL, PICK_TOL, vp);
+#endif
 
     /* 绘制场景 */
     paintGL();                                      // 触发绘制（夹取的一帧）(update()同样)
@@ -267,3 +285,26 @@ void SsFixedPipelineGLWidgetBase::onMousePick(const QPointF &pos)
         };
      */
 }
+
+#if QT_VERSION_MAJOR >= 6
+void SsFixedPipelineGLWidgetBase::customPickMatrix(GLdouble x, GLdouble y, GLdouble width, GLdouble height, GLint viewport[4])
+{
+    GLfloat m[16];
+    GLfloat sx, sy;
+    GLfloat tx, ty;
+    
+    sx = viewport[2] / width;
+    sy = viewport[3] / height;
+    tx = (viewport[2] + 2.0 * (viewport[0] - x)) / width;
+    ty = (viewport[3] + 2.0 * (viewport[1] - y)) / height;
+    
+    #define M(row,col) m[col*4+row]
+    M(0,0) = sx; M(0,1) = 0.0; M(0,2) = 0.0; M(0,3) = tx;
+    M(1,0) = 0.0; M(1,1) = sy; M(1,2) = 0.0; M(1,3) = ty;
+    M(2,0) = 0.0; M(2,1) = 0.0; M(2,2) = 1.0; M(2,3) = 0.0;
+    M(3,0) = 0.0; M(3,1) = 0.0; M(3,2) = 0.0; M(3,3) = 1.0;
+    #undef M
+    
+    glMultMatrixf(m);
+}
+#endif

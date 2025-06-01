@@ -10,7 +10,10 @@ SsI18nWindow::SsI18nWindow(const QString &context, QWidget *parent)
 
 void SsI18nWindow::loadPrivateTranslation(const QString &qmPath)
 {
-    m_privateTranslator->load(qmPath);
+    if (!m_privateTranslator->load(qmPath))
+    {
+        qWarning() << "Failed to load translation file:" << qmPath;
+    }
 }
 
 QString SsI18nWindow::contextTr(const char *sourceText, const char *disambiguation, int n)

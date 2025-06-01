@@ -89,10 +89,11 @@ private:
 
     QVector3D m_lastviewCenter_; // 记录前一次视图中心点
     float m_wheelZoomFactor_;    // 鼠标缩放系数
+
+#if QT_VERSION_MAJOR >= 6
+    void customPickMatrix(GLdouble x, GLdouble y, GLdouble width, GLdouble height, GLint viewport[4]);
+#endif
 };
-
-
-
 
 
 #endif // FIXED_PIPELINE_OPENGL_VIEW_H_

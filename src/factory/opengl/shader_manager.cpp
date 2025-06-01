@@ -3,7 +3,13 @@
 #include <QOpenGLShader>
 #include <QFile>
 #include <regex>
+#if QT_VERSION_MAJOR < 6
 #include <QRegExp>
+using CurRegExp = QRegExp;
+#else
+#include <QRegularExpression>
+using CurRegExp = QRegularExpression;
+#endif
 #include <QRegularExpression>
 #include <QDebug>
 

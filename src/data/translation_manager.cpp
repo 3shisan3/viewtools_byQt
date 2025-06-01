@@ -58,7 +58,7 @@ void SsTranslationManager::load(const QString &path)
     // 处理符号链接
     while (fileInfo.isSymLink())
     {
-        fileInfo = fileInfo.symLinkTarget();
+        fileInfo = QFileInfo(fileInfo.symLinkTarget());
     }
     // 判断路径有效性及是否为文件夹
     if (!fileInfo.exists())
