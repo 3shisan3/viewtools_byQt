@@ -15,11 +15,11 @@ Version history
 #ifndef SHADER_MANAGER_H_
 #define SHADER_MANAGER_H_
 
-#include <QOpenGLFunctions_4_5_Core>
+#include <QOpenGLFunctions>
 #include <QOpenGLShader>
 #include <QOpenGLShaderProgram>
 
-class SsSharderManager : public QOpenGLShaderProgram, QOpenGLFunctions_4_5_Core
+class SsSharderManager : public QOpenGLShaderProgram, QOpenGLFunctions
 {
 public:
     SsSharderManager();

@@ -43,6 +43,7 @@ void ExampleWindow::showQmlWindow()
     qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
     qmlWidget->setWindowTitle("QML界面");
     qmlWidget->resize(400, 300);
+
     qmlWidget->show();
     this->hide();
 

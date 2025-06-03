@@ -1,5 +1,5 @@
-import QtQuick 2.15
-import QtQuick.Controls 2.15
+import QtQuick
+import QtQuick.Controls
 
 Rectangle {
     width: 400
@@ -10,14 +10,25 @@ Rectangle {
         anchors.centerIn: parent
         spacing: 20
 
-        Button {
-            text: "QML按钮"
-            background: Rectangle {
-                color: "#4CAF50"
-                radius: 5
+        // 使用纯 Rectangle + MouseArea 模拟按钮（兼容性最强）
+        Rectangle {
+            id: customButton
+            width: 120
+            height: 40
+            radius: 5
+            color: mouseArea.containsPress ? "#388E3C" : "#4CAF50"
+            
+            Text {
+                text: "QML按钮"
+                anchors.centerIn: parent
+                color: "white"
+                font.pixelSize: 14
             }
-            onClicked: {
-                label.text = "按钮被点击！"
+
+            MouseArea {
+                id: mouseArea
+                anchors.fill: parent
+                onClicked: label.text = "按钮被点击！"
             }
         }
 

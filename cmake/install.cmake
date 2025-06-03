@@ -11,23 +11,11 @@ file(GLOB LIB_FILES
 )
 install(FILES ${LIB_FILES} DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
 
-# 需要安装的qt库
-list(APPEND QT_LIBS
-    libicui18n.so.56
-    libicuuc.so.56
-    libicudata.so.56
-    libQt5Core.so.5
-    libQt5Gui.so.5
-    libQt5Widgets.so.5
-)
-
 # 创建文件夹
 install(CODE "execute_process(COMMAND mkdir -p ${CMAKE_INSTALL_PREFIX}/depend/lib)")
 
 # 拷贝qt的库
-foreach(item ${QT_LIBS})
-    install(CODE "execute_process(COMMAND cp -L ${QT_PREFIX_PATH}/lib/${item} ${CMAKE_INSTALL_PREFIX}/depend/lib)")
-endforeach()
+
 
 # 需要安装的qt插件
 install(DIRECTORY ${QT_PREFIX_PATH}/plugins DESTINATION ${CMAKE_INSTALL_PREFIX}/depend)

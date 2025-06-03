@@ -5,7 +5,7 @@ find_package(Qt6 COMPONENTS Core Widgets Gui REQUIRED)
 qt6_add_resources(PROJECT_MOC_QRCS ${PROJECT_QRCS})
 
 # 添加ui文件
-qt6_wrap_ui(PROJECT_MOC_UIS ${PROJECT_UIS})
+# qt6_wrap_ui(PROJECT_MOC_UIS ${PROJECT_UIS})
 
 # qt的资源
 set(QT_SRCS
@@ -24,17 +24,11 @@ set(QT_DEPEND_LIBS
 if (EXAMPLE_PROJ)
     add_definitions(-DEXAMPLE_ON)
 
-    find_package(Qt6 COMPONENTS Quick QuickWidgets REQUIRED)
+    find_package(Qt6 COMPONENTS Quick QuickWidgets QuickControls2 REQUIRED)
     list(APPEND QT_DEPEND_LIBS
         Qt6::Quick
         Qt6::QuickWidgets
-    )
-    list(APPEND QT_LIBS
-        libQt6QuickWidgets.so.6
-        libQt6Quick.so.6
-        libQt6QmlModels.so.6
-        libQt6Qml.so.6
-        libQt6Network.so.6
+        Qt6::QuickControls2
     )
 endif (EXAMPLE_PROJ)
 
@@ -45,25 +39,35 @@ if (ENABLE_SVG)
     list(APPEND QT_DEPEND_LIBS
         Qt6::Svg
     )
-    list(APPEND QT_LIBS
-        libQt6Svg.so.6
-    )
 endif (ENABLE_SVG)
 
 if (ENABLE_OPENGL)
     add_definitions(-DOPENGL_ENABLE)
 
-    find_package(OpenGL REQUIRED) 
+    if(ANDROID)
+        # Android 使用 OpenGL ES
+        find_library(OPENGLES2_LIBRARY GLESv2)
+        find_library(OPENGLES3_LIBRARY GLESv3)
+        find_library(EGL_LIBRARY EGL)
+        add_definitions(-DQT_OPENGL_ES_2)
+        
+        list(APPEND QT_DEPEND_LIBS
+            ${OPENGLES2_LIBRARY}
+            ${EGL_LIBRARY}
+        )
+    else()
+        # 非 Android 平台（Windows/Linux/macOS）使用标准 OpenGL
+        find_package(OpenGL REQUIRED)
+        list(APPEND QT_DEPEND_LIBS
+            OpenGL::GL   # 系统的 OpenGL 库
+            OpenGL::GLU
+        )
+    endif()
+
     find_package(Qt6 COMPONENTS OpenGL OpenGLWidgets REQUIRED)
     list(APPEND QT_DEPEND_LIBS
         Qt6::OpenGL
         Qt6::OpenGLWidgets
-        OpenGL::GL   # 系统的 OpenGL 库
-        OpenGL::GLU
-    )
-
-    list(APPEND QT_LIBS
-        libQt6OpenGL.so.6
     )
 endif (ENABLE_OPENGL)
 

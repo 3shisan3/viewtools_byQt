@@ -11,17 +11,19 @@ Version history
 
 *****************************************************************/
 
+#ifndef QT_OPENGL_ES_2      // 安卓不支持固定渲染管线
+
 #ifndef FIXED_PIPELINE_OPENGL_VIEW_H_
 #define FIXED_PIPELINE_OPENGL_VIEW_H_
 
-#include <QOpenGLFunctions>
+#include <QOpenGLFunctions_2_1>
 #include <QOpenGLTexture>
 #include <QOpenGLWidget>
 #include <QVector2D>
 #include <QVector3D>
 
 
-class SsFixedPipelineGLWidgetBase : public QOpenGLWidget, QOpenGLFunctions
+class SsFixedPipelineGLWidgetBase : public QOpenGLWidget, QOpenGLFunctions_2_1 
 {
     Q_OBJECT
 public:
@@ -96,4 +98,6 @@ private:
 };
 
 
-#endif // FIXED_PIPELINE_OPENGL_VIEW_H_
+#endif  // FIXED_PIPELINE_OPENGL_VIEW_H_
+
+#endif  // QT_OPENGL_ES_2

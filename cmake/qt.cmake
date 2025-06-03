@@ -1,5 +1,5 @@
 # 设置默认的 Qt 目录
-set(QT_PREFIX_PATH "C:\\Dev\\Qt\\6.8.3\\mingw_64" CACHE PATH "Default Qt install path")
+set(QT_PREFIX_PATH "C:\\workspace\\dev_tools\\Qt\\6.8.3\\mingw_64" CACHE PATH "Default Qt install path")
 
 # 检查路径是否存在
 if(NOT EXISTS ${QT_PREFIX_PATH})
@@ -55,6 +55,3 @@ if(QT_VERSION EQUAL 6)
 else()
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/custom/qt_version/qt5.cmake)
 endif()
-
-# 程序打包时安装的库集合
-set(QT_LIBS "")

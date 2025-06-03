@@ -1,18 +1,20 @@
+#ifndef QT_OPENGL_ES_2
+
 #include "fixedPipelineGL.h"
 
-#ifndef APIENTRY
-#  if defined(_WIN32) && !defined(_WIN32_WCE) && !defined(__SCITECH_SNAP__)
-#    define APIENTRY __stdcall
-#  else
-#    define APIENTRY
-#  endif
-#endif
+// #ifndef APIENTRY
+// #  if defined(_WIN32) && !defined(_WIN32_WCE) && !defined(__SCITECH_SNAP__)
+// #    define APIENTRY __stdcall
+// #  else
+// #    define APIENTRY
+// #  endif
+// #endif
 
-// 根据 Qt 版本选择 GLU 头文件
-#if defined(_WIN32) && QT_VERSION_MAJOR >= 6
-#include <windows.h>  // 确保 Windows.h 在 glu.h 之前包含
-#endif
-#include <GL/glu.h>
+// // 根据 Qt 版本选择 GLU 头文件
+// #if defined(_WIN32) && QT_VERSION_MAJOR >= 6
+// #include <windows.h>  // 确保 Windows.h 在 glu.h 之前包含
+// #endif
+// #include <GL/glu.h>
 
 #include <cmath>
 #include <QPainter>
@@ -308,3 +310,5 @@ void SsFixedPipelineGLWidgetBase::customPickMatrix(GLdouble x, GLdouble y, GLdou
     glMultMatrixf(m);
 }
 #endif
+
+#endif  // QT_OPENGL_ES_2

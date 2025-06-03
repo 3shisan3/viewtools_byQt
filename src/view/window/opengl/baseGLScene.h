@@ -16,9 +16,9 @@ Version history
 #define BASE_OPENGL_SCENE_H_
 
 #include <QOpenGLWidget>
-#include <QOpenGLFunctions_4_5_Core>
+#include <QOpenGLFunctions>
 
-class SsBaseGLScene : public QOpenGLWidget, protected QOpenGLFunctions_4_5_Core
+class SsBaseGLScene : public QOpenGLWidget, protected QOpenGLFunctions
 {
     Q_OBJECT
 public:

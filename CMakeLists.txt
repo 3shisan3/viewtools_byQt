@@ -14,8 +14,9 @@ endif()
 # 指定编译器
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-# 禁用编译器特有的扩展
+# 禁用编译器特有的扩展(避开GNU，CLANG等不同的支持)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # 指定输出目录
 set(EXECUTABLE_OUTPUT_PATH ${CMAKE_CURRENT_SOURCE_DIR}/bin)
@@ -50,16 +51,16 @@ file(GLOB_RECURSE PROJECT_SRCS
 # 指定库文件搜索路径
 link_directories(${3RD_DIR}/lib)
 
+# 所有平台共用的源文件
+set(TARGET_SOURCES
+    ${PROJECT_SRCS}
+    ${QT_SRCS}
+)
 # 生成可执行文件
-if (WIN32)
-    # 需标记WIN32，否则运行时会出现控制台界面
-    add_executable(${PROJECT_NAME} WIN32 ${PROJECT_SRCS} ${QT_SRCS})
-else()
-    add_executable(${PROJECT_NAME}  ${PROJECT_SRCS} ${QT_SRCS})
-endif()
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/platform_config.cmake)
 
 #依赖库
-target_link_libraries(${PROJECT_NAME}
+target_link_libraries(${PROJECT_NAME} PRIVATE
     ${QT_DEPEND_LIBS}
 )
 
