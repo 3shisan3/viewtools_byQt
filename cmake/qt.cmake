@@ -1,5 +1,5 @@
 # 设置默认的 Qt 目录
-set(QT_PREFIX_PATH "C:\\workspace\\dev_tools\\Qt\\6.8.3\\mingw_64" CACHE PATH "Default Qt install path")
+set(QT_PREFIX_PATH "C:\\Dev\\Qt\\6.8.3\\mingw_64" CACHE PATH "Default Qt install path")
 
 # 检查路径是否存在
 if(NOT EXISTS ${QT_PREFIX_PATH})
