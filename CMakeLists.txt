@@ -57,7 +57,7 @@ set(TARGET_SOURCES
     ${QT_SRCS}
 )
 # 生成可执行文件
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/platform_config.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/platform.cmake)
 
 #依赖库
 target_link_libraries(${PROJECT_NAME} PRIVATE

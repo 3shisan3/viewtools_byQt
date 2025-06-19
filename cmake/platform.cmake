@@ -56,4 +56,41 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E echo "Qt deployment completed"
         COMMENT "Deploying Qt runtime dependencies..."
     )
+elseif(UNIX NOT APPLE AND NOT ANDROID)
+    # Linux 平台使用 linuxdeployqt 或手动处理
+    # 自动获取工具路径
+    execute_process(
+        COMMAND bash "${CMAKE_SOURCE_DIR}/script/tools/check_linuxdeployqt.sh" "auto"
+        OUTPUT_VARIABLE DEPLOYQT_PATH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE INSTALL_RESULT
+    )
+    if(INSTALL_RESULT EQUAL 0 AND EXISTS "${DEPLOYQT_PATH}")
+        add_custom_target(deploy
+            COMMAND "${DEPLOYQT_PATH}"
+                "$<TARGET_FILE:${PROJECT_NAME}>"
+                -qmldir="${CMAKE_SOURCE_DIR}/ui/qml"
+                -bundle-non-qt-libs
+                -no-translations
+                -appimage
+            DEPENDS ${PROJECT_NAME}
+            COMMENT "Creating AppImage bundle..."
+        )
+    else()
+        message(WARNING "linuxdeployqt not available, deployment disabled")
+        # 备用方案：使用 patchelf 和 ldd 手动处理依赖
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "Manual dependency handling for Linux..."
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${EXECUTABLE_OUTPUT_PATH}/lib"
+            COMMAND sh -c "ldd ${EXECUTABLE_OUTPUT_PATH}/${PROJECT_NAME} | grep \"=> /\" | awk '{print \$3}' | xargs -I '{}' cp -v '{}' ${EXECUTABLE_OUTPUT_PATH}/lib"
+            COMMAND sh -c "patchelf --set-rpath '\\$ORIGIN/lib' ${EXECUTABLE_OUTPUT_PATH}/${PROJECT_NAME}"
+            COMMENT "Manually copying shared libraries..."
+        )
+    endif()
+elseif(ANDROID)
+    # Android 平台自动处理依赖，但可以添加额外步骤
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E echo "Android build complete - APK should contain all dependencies"
+        COMMENT "Android deployment handled by Qt build system..."
+    )
 endif()
