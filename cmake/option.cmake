@@ -13,3 +13,6 @@ option(ENABLE_OPENGL "ability to use OpenGL related rendering functions" ON)
 
 # 是否自动管理翻译更新
 option(ENABLE_AUTO_Linguist "automatically manage translation updates" OFF)
+
+# 启用播放器模块
+option(ENABLE_MEDIA_PLAYER "using video streaming playback module" ON)

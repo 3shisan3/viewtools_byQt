@@ -26,6 +26,8 @@ set(3RD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty)
 
 # 引入 qt 相关配置
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/qt.cmake)
+# 引入三方库相关配置
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/thirddepend.cmake)
 
 # 打印关键信息
 message(STATUS "CMAKE_BUILD_TYPE:${CMAKE_BUILD_TYPE}")
@@ -43,10 +45,8 @@ include_directories(
 )
 
 # 指定源码
-file(GLOB_RECURSE PROJECT_SRCS
-    # ${SOURCE_CODE_DIR}/main.cpp
-    ${SOURCE_CODE_DIR}/*.cpp
-)
+file(GLOB PROJECT_SRCS ${SOURCE_CODE_DIR}/main.cpp)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/code.cmake)
 
 # 指定库文件搜索路径
 link_directories(${3RD_DIR}/lib)

@@ -25,6 +25,8 @@ public:
 
 private:
     explicit SsSettingsManager();
+
+    static QString getConfigPath();
 };
 
 #endif // _SETTING_MANAGER_H_
