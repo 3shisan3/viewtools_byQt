@@ -55,8 +55,9 @@ endif()
 if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
     message(STATUS "Building FFmpeg ${FFMPEG_VERSION} from source")
 
-    # FFmpeg自定义安装路径
-    set(FFMPEG_INSTALL_DIR ${3RD_DIR}/ffmpeg)
+    # FFmpeg自定义安装路径（使用正斜杠）
+    set(FFMPEG_INSTALL_DIR "${3RD_DIR}/ffmpeg")
+    file(TO_CMAKE_PATH "${FFMPEG_INSTALL_DIR}" FFMPEG_INSTALL_DIR) # 确保路径格式统一
     message(STATUS "FFmpeg安装路径: ${FFMPEG_INSTALL_DIR}")
     file(MAKE_DIRECTORY "${FFMPEG_INSTALL_DIR}")
 
@@ -64,9 +65,20 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
     include(ProcessorCount)
     ProcessorCount(NPROC)
 
+    # 查找必要的工具
+    find_program(BASH_EXECUTABLE bash)
+    find_program(MAKE_EXECUTABLE NAMES make mingw32-make)
+    
+    if(NOT BASH_EXECUTABLE)
+        message(FATAL_ERROR "bash not found! Required for FFmpeg configuration")
+    endif()
+    
+    if(NOT MAKE_EXECUTABLE)
+        message(FATAL_ERROR "make not found! Required for building FFmpeg")
+    endif()
+
     # 设置基本FFmpeg构建选项
     set(FFMPEG_CONFIGURE_OPTIONS
-        --prefix=${FFMPEG_INSTALL_DIR}
         --enable-gpl
         --enable-version3
         --disable-static
@@ -126,14 +138,32 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
         if(NOT ANDROID_NDK)
             message(FATAL_ERROR "ANDROID_NDK not set for Android build")
         endif()
+        
+        # 根据Android ABI设置arch
+        if(ANDROID_ABI STREQUAL "armeabi-v7a")
+            set(FFMPEG_ARCH "arm")
+            set(FFMPEG_CPU "armv7-a")
+        elseif(ANDROID_ABI STREQUAL "arm64-v8a")
+            set(FFMPEG_ARCH "aarch64")
+            set(FFMPEG_CPU "armv8-a")
+        elseif(ANDROID_ABI STREQUAL "x86")
+            set(FFMPEG_ARCH "i686")
+            set(FFMPEG_CPU "i686")
+        elseif(ANDROID_ABI STREQUAL "x86_64")
+            set(FFMPEG_ARCH "x86_64")
+            set(FFMPEG_CPU "x86-64")
+        endif()
+        
         list(APPEND FFMPEG_CONFIGURE_OPTIONS
             --target-os=android
-            --arch=${ANDROID_ABI}
+            --arch=${FFMPEG_ARCH}
+            --cpu=${FFMPEG_CPU}
             --enable-cross-compile
             --cross-prefix=${ANDROID_TOOLCHAIN}/bin/${ANDROID_TOOLCHAIN_PREFIX}-
             --sysroot=${ANDROID_SYSROOT}
             --extra-cflags=-fPIC
             --extra-ldflags=-fPIC
+            --extra-cflags=-D__ANDROID_API__=${ANDROID_PLATFORM}
         )
     else() # Linux/Unix
         list(APPEND FFMPEG_CONFIGURE_OPTIONS
@@ -149,14 +179,41 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
         endif()
     endif()
 
+    # 将配置选项列表转换为字符串（处理Windows路径）
+    if(WIN32)
+        # 在Windows上使用正斜杠
+        string(REPLACE ";" " " FFMPEG_CONFIGURE_OPTIONS_STR "${FFMPEG_CONFIGURE_OPTIONS}")
+        string(REPLACE "\\" "/" FFMPEG_INSTALL_DIR_FOR_CONFIGURE "${FFMPEG_INSTALL_DIR}")
+        set(FFMPEG_CONFIGURE_OPTIONS_STR "--prefix=${FFMPEG_INSTALL_DIR_FOR_CONFIGURE} ${FFMPEG_CONFIGURE_OPTIONS_STR}")
+    else()
+        string(REPLACE ";" " " FFMPEG_CONFIGURE_OPTIONS_STR "${FFMPEG_CONFIGURE_OPTIONS}")
+        set(FFMPEG_CONFIGURE_OPTIONS_STR "--prefix=${FFMPEG_INSTALL_DIR} ${FFMPEG_CONFIGURE_OPTIONS_STR}")
+    endif()
+
     # 下载并构建 FFmpeg
     ExternalProject_Add(ffmpeg
         GIT_REPOSITORY "https://git.ffmpeg.org/ffmpeg.git"
         GIT_TAG "n${FFMPEG_VERSION}"
         PREFIX "${CMAKE_BINARY_DIR}/ffmpeg-build"
-        CONFIGURE_COMMAND <SOURCE_DIR>/configure ${FFMPEG_CONFIGURE_OPTIONS}
-        BUILD_COMMAND ${MAKE} -j${NPROC}
-        INSTALL_COMMAND ${MAKE} install
+        
+        # 配置命令（简化版，避免转义问题）
+        CONFIGURE_COMMAND
+            ${CMAKE_COMMAND} -E env
+            ${BASH_EXECUTABLE} -c
+            "cd <SOURCE_DIR> && ./configure ${FFMPEG_CONFIGURE_OPTIONS_STR}"
+        
+        # 构建命令
+        BUILD_COMMAND
+            ${CMAKE_COMMAND} -E env
+            ${BASH_EXECUTABLE} -c
+            "cd <SOURCE_DIR> && ${MAKE_EXECUTABLE} -j${NPROC}"
+        
+        # 安装命令
+        INSTALL_COMMAND
+            ${CMAKE_COMMAND} -E env
+            ${BASH_EXECUTABLE} -c
+            "cd <SOURCE_DIR> && ${MAKE_EXECUTABLE} install"
+        
         BUILD_IN_SOURCE 1
         LOG_DOWNLOAD 1
         LOG_CONFIGURE 1

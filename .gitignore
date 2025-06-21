@@ -6,6 +6,7 @@ build
 bin
 # 编译install生成内容
 package
+thirdparty
 
 # 使用 Qt Creator 编译输出
 *.user

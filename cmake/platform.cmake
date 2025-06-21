@@ -1,4 +1,4 @@
-# 生成可执行程序
+# 针对不同平台生成可执行程序
 if (ANDROID)
     # 设置 Android 包名（必须与 AndroidManifest.xml 的 package 一致）
     set(ANDROID_PACKAGE_NAME "com.example.${PROJECT_NAME}")
