@@ -1,5 +1,5 @@
 # FFmpeg 配置选项
-set(FFMPEG_VERSION "6.0" CACHE STRING "FFmpeg version to use")
+set(FFMPEG_VERSION "7.0" CACHE STRING "FFmpeg version to use")
 set(FFMPEG_SOURCE_BUILD OFF CACHE BOOL "Force build FFmpeg from source")
 set(FFMPEG_COMPONENTS avcodec avformat avutil swresample swscale)
 
@@ -58,7 +58,7 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
     # FFmpeg自定义安装路径（使用正斜杠）
     set(FFMPEG_INSTALL_DIR "${3RD_DIR}/ffmpeg")
     file(TO_CMAKE_PATH "${FFMPEG_INSTALL_DIR}" FFMPEG_INSTALL_DIR) # 确保路径格式统一
-    message(STATUS "FFmpeg安装路径: ${FFMPEG_INSTALL_DIR}")
+    message(STATUS "FFmpeg install path: ${FFMPEG_INSTALL_DIR}")
     file(MAKE_DIRECTORY "${FFMPEG_INSTALL_DIR}")
 
     include(ExternalProject)
@@ -67,14 +67,45 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
 
     # 查找必要的工具
     find_program(BASH_EXECUTABLE bash)
-    find_program(MAKE_EXECUTABLE NAMES make mingw32-make)
-    
     if(NOT BASH_EXECUTABLE)
         message(FATAL_ERROR "bash not found! Required for FFmpeg configuration")
     endif()
     
-    if(NOT MAKE_EXECUTABLE)
-        message(FATAL_ERROR "make not found! Required for building FFmpeg")
+    # 在Android NDK中查找make工具
+    if(ANDROID)
+        # 确定NDK主机标签
+        if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+            set(NDK_HOST_TAG "windows-x86_64")
+        elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+            set(NDK_HOST_TAG "linux-x86_64")
+        elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+            set(NDK_HOST_TAG "darwin-x86_64")
+        endif()
+
+        # 查找make工具（在NDK的prebuilt目录中）
+        find_program(MAKE_EXECUTABLE 
+            NAMES make mingw32-make make.exe
+            PATHS "${ANDROID_NDK}/prebuilt/${NDK_HOST_TAG}/bin"
+            NO_DEFAULT_PATH)
+
+        if(NOT MAKE_EXECUTABLE)
+            message(WARNING "make not found in NDK prebuilt directory, trying system path")
+            find_program(MAKE_EXECUTABLE NAMES make mingw32-make make.exe)
+        endif()
+
+        if(NOT MAKE_EXECUTABLE)
+            message(FATAL_ERROR "make not found! Required for building FFmpeg. "
+                "For Android builds, ensure ANDROID_NDK is set correctly and "
+                "make is available in ${ANDROID_NDK}/prebuilt/${NDK_HOST_TAG}/bin")
+        endif()
+
+        message(STATUS "Found make for Android: ${MAKE_EXECUTABLE}")
+    else()
+        # 非Android平台的make查找
+        find_program(MAKE_EXECUTABLE NAMES make mingw32-make)
+        if(NOT MAKE_EXECUTABLE)
+            message(FATAL_ERROR "make not found! Required for building FFmpeg")
+        endif()
     endif()
 
     # 设置基本FFmpeg构建选项
@@ -138,32 +169,59 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
         if(NOT ANDROID_NDK)
             message(FATAL_ERROR "ANDROID_NDK not set for Android build")
         endif()
+
+        # 设置NDK工具链路径
+        set(NDK_TOOLCHAIN_DIR "${ANDROID_NDK}/toolchains/llvm/prebuilt/${NDK_HOST_TAG}")
+        # 验证工具链路径是否存在
+        if(NOT EXISTS "${NDK_TOOLCHAIN_DIR}")
+            message(FATAL_ERROR "Could not find NDK toolchain directory at ${NDK_TOOLCHAIN_DIR}")
+        endif()
+        set(ANDROID_SYSROOT "${NDK_TOOLCHAIN_DIR}/sysroot")
         
         # 根据Android ABI设置arch
         if(ANDROID_ABI STREQUAL "armeabi-v7a")
             set(FFMPEG_ARCH "arm")
             set(FFMPEG_CPU "armv7-a")
+            set(FFMPEG_CROSS_PREFIX "arm-linux-androideabi")
+            set(FFMPEG_TOOLCHAIN_PREFIX "armv7a-linux-androideabi")
         elseif(ANDROID_ABI STREQUAL "arm64-v8a")
             set(FFMPEG_ARCH "aarch64")
             set(FFMPEG_CPU "armv8-a")
+            set(FFMPEG_CROSS_PREFIX "aarch64-linux-android")
+            set(FFMPEG_TOOLCHAIN_PREFIX "aarch64-linux-android")
         elseif(ANDROID_ABI STREQUAL "x86")
             set(FFMPEG_ARCH "i686")
             set(FFMPEG_CPU "i686")
+            set(FFMPEG_CROSS_PREFIX "i686-linux-android")
+            set(FFMPEG_TOOLCHAIN_PREFIX "i686-linux-android")
         elseif(ANDROID_ABI STREQUAL "x86_64")
             set(FFMPEG_ARCH "x86_64")
             set(FFMPEG_CPU "x86-64")
+            set(FFMPEG_CROSS_PREFIX "x86_64-linux-android")
+            set(FFMPEG_TOOLCHAIN_PREFIX "x86_64-linux-android")
         endif()
+
+        # 正确解析Android平台版本号
+        string(REGEX REPLACE "android-" "" ANDROID_API_LEVEL "${ANDROID_PLATFORM}")
         
+        # 设置Android特定选项
         list(APPEND FFMPEG_CONFIGURE_OPTIONS
             --target-os=android
             --arch=${FFMPEG_ARCH}
             --cpu=${FFMPEG_CPU}
             --enable-cross-compile
-            --cross-prefix=${ANDROID_TOOLCHAIN}/bin/${ANDROID_TOOLCHAIN_PREFIX}-
+            --cross-prefix=${NDK_TOOLCHAIN_DIR}/bin/${FFMPEG_CROSS_PREFIX}-
             --sysroot=${ANDROID_SYSROOT}
+            --cc=${NDK_TOOLCHAIN_DIR}/bin/${FFMPEG_TOOLCHAIN_PREFIX}${ANDROID_API_LEVEL}-clang
+            --cxx=${NDK_TOOLCHAIN_DIR}/bin/${FFMPEG_TOOLCHAIN_PREFIX}${ANDROID_API_LEVEL}-clang++
+            --ar=${NDK_TOOLCHAIN_DIR}/bin/llvm-ar
+            --nm=${NDK_TOOLCHAIN_DIR}/bin/llvm-nm
+            --ranlib=${NDK_TOOLCHAIN_DIR}/bin/llvm-ranlib
             --extra-cflags=-fPIC
             --extra-ldflags=-fPIC
-            --extra-cflags=-D__ANDROID_API__=${ANDROID_PLATFORM}
+            --extra-cflags=-D__ANDROID_API__=${ANDROID_API_LEVEL}
+            --extra-cflags=-I${ANDROID_SYSROOT}/usr/include
+            --extra-ldflags=-L${ANDROID_SYSROOT}/usr/lib/${FFMPEG_CROSS_PREFIX}/${ANDROID_API_LEVEL}
         )
     else() # Linux/Unix
         list(APPEND FFMPEG_CONFIGURE_OPTIONS
@@ -179,15 +237,52 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
         endif()
     endif()
 
-    # 将配置选项列表转换为字符串（处理Windows路径）
-    if(WIN32)
-        # 在Windows上使用正斜杠
+    # 将配置选项列表转换为字符串
+    if(ANDROID)
+        # Android交叉编译特殊处理
+        if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+            # Windows主机交叉编译Android
+            message(STATUS "--- configure at windows platform ---")
+            string(REPLACE ";" " " FFMPEG_CONFIGURE_OPTIONS_STR "${FFMPEG_CONFIGURE_OPTIONS}")
+            file(TO_CMAKE_PATH "${FFMPEG_INSTALL_DIR}" FFMPEG_INSTALL_DIR_FOR_CONFIGURE)
+            set(FFMPEG_CONFIGURE_OPTIONS_STR "--prefix=${FFMPEG_INSTALL_DIR_FOR_CONFIGURE} ${FFMPEG_CONFIGURE_OPTIONS_STR}")
+            
+            # 确保所有路径使用正斜杠
+            string(REPLACE "\\" "/" FFMPEG_CONFIGURE_OPTIONS_STR "${FFMPEG_CONFIGURE_OPTIONS_STR}")
+        else()
+            # Linux/macOS主机交叉编译Android
+            message(STATUS "--- configure at linux platform ---")
+            string(REPLACE ";" " " FFMPEG_CONFIGURE_OPTIONS_STR "${FFMPEG_CONFIGURE_OPTIONS}")
+            set(FFMPEG_CONFIGURE_OPTIONS_STR "--prefix=${FFMPEG_INSTALL_DIR} ${FFMPEG_CONFIGURE_OPTIONS_STR}")
+        endif()
+    elseif(WIN32)
+        # 原生Windows编译
         string(REPLACE ";" " " FFMPEG_CONFIGURE_OPTIONS_STR "${FFMPEG_CONFIGURE_OPTIONS}")
-        string(REPLACE "\\" "/" FFMPEG_INSTALL_DIR_FOR_CONFIGURE "${FFMPEG_INSTALL_DIR}")
+        file(TO_CMAKE_PATH "${FFMPEG_INSTALL_DIR}" FFMPEG_INSTALL_DIR_FOR_CONFIGURE)
         set(FFMPEG_CONFIGURE_OPTIONS_STR "--prefix=${FFMPEG_INSTALL_DIR_FOR_CONFIGURE} ${FFMPEG_CONFIGURE_OPTIONS_STR}")
+        
+        # MinGW需要正斜杠，MSVC需要反斜杠
+        if(NOT MSVC)
+            string(REPLACE "\\" "/" FFMPEG_CONFIGURE_OPTIONS_STR "${FFMPEG_CONFIGURE_OPTIONS_STR}")
+        endif()
     else()
+        # Linux/macOS原生编译
         string(REPLACE ";" " " FFMPEG_CONFIGURE_OPTIONS_STR "${FFMPEG_CONFIGURE_OPTIONS}")
         set(FFMPEG_CONFIGURE_OPTIONS_STR "--prefix=${FFMPEG_INSTALL_DIR} ${FFMPEG_CONFIGURE_OPTIONS_STR}")
+    endif()
+
+    if(ANDROID AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+        # Windows 上交叉编译 Android 时，使用 cmd 而不是 bash
+        set(FFMPEG_CONFIGURE_COMMAND
+            ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
+            cmd /c "configure ${FFMPEG_CONFIGURE_OPTIONS_STR}"
+        )
+    else()
+        # 其他情况使用原来的 bash 命令
+        set(FFMPEG_CONFIGURE_COMMAND
+            ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
+            ${BASH_EXECUTABLE} -c "./configure ${FFMPEG_CONFIGURE_OPTIONS_STR}"
+        )
     endif()
 
     # 下载并构建 FFmpeg
@@ -196,29 +291,26 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
         GIT_TAG "n${FFMPEG_VERSION}"
         PREFIX "${CMAKE_BINARY_DIR}/ffmpeg-build"
         
-        # 配置命令（简化版，避免转义问题）
+        # 配置前准备
         CONFIGURE_COMMAND
-            ${CMAKE_COMMAND} -E env
-            ${BASH_EXECUTABLE} -c
-            "cd <SOURCE_DIR> && ./configure ${FFMPEG_CONFIGURE_OPTIONS_STR}"
+            ${FFMPEG_CONFIGURE_COMMAND}
         
         # 构建命令
         BUILD_COMMAND
-            ${CMAKE_COMMAND} -E env
-            ${BASH_EXECUTABLE} -c
-            "cd <SOURCE_DIR> && ${MAKE_EXECUTABLE} -j${NPROC}"
+            ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
+            ${MAKE_EXECUTABLE} -j${NPROC}
         
         # 安装命令
         INSTALL_COMMAND
-            ${CMAKE_COMMAND} -E env
-            ${BASH_EXECUTABLE} -c
-            "cd <SOURCE_DIR> && ${MAKE_EXECUTABLE} install"
+            ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
+            ${MAKE_EXECUTABLE} install
         
         BUILD_IN_SOURCE 1
         LOG_DOWNLOAD 1
         LOG_CONFIGURE 1
         LOG_BUILD 1
         LOG_INSTALL 1
+        LOG_OUTPUT_ON_FAILURE TRUE
     )
 
     # 设置 FFmpeg 库和头文件路径

@@ -56,7 +56,7 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E echo "Qt deployment completed"
         COMMENT "Deploying Qt runtime dependencies..."
     )
-elseif(UNIX NOT APPLE AND NOT ANDROID)
+elseif(UNIX AND NOT APPLE AND NOT ANDROID)
     # Linux 平台使用 linuxdeployqt 或手动处理
     # 自动获取工具路径
     execute_process(
