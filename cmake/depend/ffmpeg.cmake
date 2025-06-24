@@ -244,6 +244,20 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
     string(REPLACE "\\" "/" FFMPEG_INSTALL_DIR_FOR_CONFIGURE "${FFMPEG_INSTALL_DIR_FOR_CONFIGURE}")
     string(REPLACE "\\" "/" FFMPEG_CONFIGURE_OPTIONS_STR "${FFMPEG_CONFIGURE_OPTIONS_STR}")
     set(FFMPEG_CONFIGURE_OPTIONS_STR "--prefix=${FFMPEG_INSTALL_DIR_FOR_CONFIGURE} ${FFMPEG_CONFIGURE_OPTIONS_STR}")
+
+    if(WIN32)
+        set(FFMPEG_PRE_CONFIGURE_COMMAND 
+            COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
+                    ${BASH_EXECUTABLE} -c "chmod a+x configure"
+        )
+    else()
+        set(FFMPEG_PRE_CONFIGURE_COMMAND 
+            COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
+                    ${BASH_EXECUTABLE} -c "find . -type f -name '*.sh' -o -name '*.pl' -o -name '*.m4' -o -name 'configure' | xargs sed -i 's/\\r$//'"
+            COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
+                    ${BASH_EXECUTABLE} -c "chmod a+x configure"
+        )
+    endif()
     
     # 下载并构建 FFmpeg
     ExternalProject_Add(ffmpeg
@@ -253,10 +267,7 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
 
         # 配置前准备：修复换行符问题
         CONFIGURE_COMMAND
-            COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
-                    ${BASH_EXECUTABLE} -c "find . -type f -name '*.sh' -o -name '*.pl' -o -name '*.m4' -o -name 'configure' | xargs sed -i 's/\\r$//'"
-            COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
-                    ${BASH_EXECUTABLE} -c "chmod a+x configure"
+            ${FFMPEG_PRE_CONFIGURE_COMMAND}
             COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
                     ${BASH_EXECUTABLE} -c "bash configure ${FFMPEG_CONFIGURE_OPTIONS_STR}"
 
