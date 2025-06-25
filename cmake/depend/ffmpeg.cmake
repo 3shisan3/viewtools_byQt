@@ -184,11 +184,15 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
             set(FFMPEG_CPU "armv7-a")
             set(FFMPEG_CROSS_PREFIX "arm-linux-androideabi")
             set(FFMPEG_TOOLCHAIN_PREFIX "armv7a-linux-androideabi")
+            
+            list(APPEND FFMPEG_CONFIGURE_OPTIONS --disable-x86asm)
         elseif(ANDROID_ABI STREQUAL "arm64-v8a")
             set(FFMPEG_ARCH "aarch64")
             set(FFMPEG_CPU "armv8-a")
             set(FFMPEG_CROSS_PREFIX "aarch64-linux-android")
             set(FFMPEG_TOOLCHAIN_PREFIX "aarch64-linux-android")
+
+            list(APPEND FFMPEG_CONFIGURE_OPTIONS --disable-x86asm)
         elseif(ANDROID_ABI STREQUAL "x86")
             set(FFMPEG_ARCH "i686")
             set(FFMPEG_CPU "i686")
@@ -251,12 +255,25 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
                     ${BASH_EXECUTABLE} -c "chmod a+x configure"
         )
     else()
-        set(FFMPEG_PRE_CONFIGURE_COMMAND 
-            COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
-                    ${BASH_EXECUTABLE} -c "find . -type f -name '*.sh' -o -name '*.pl' -o -name '*.m4' -o -name 'configure' | xargs sed -i 's/\\r$//'"
-            COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
-                    ${BASH_EXECUTABLE} -c "chmod a+x configure"
-        )
+        # 换行符转换
+        find_program(DOS2UNIX_EXECUTABLE dos2unix)
+        if(DOS2UNIX_EXECUTABLE)
+            message(STATUS "found dos2unix executable")
+            set(FFMPEG_PRE_CONFIGURE_COMMAND 
+                COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
+                        ${DOS2UNIX_EXECUTABLE} configure
+            )
+        else()
+            message(STATUS "don't found dos2unix, use git scheme")
+            set(FFMPEG_PRE_CONFIGURE_COMMAND 
+                COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
+                        git config --local core.autocrlf false
+                COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
+                        git rm --cached -r .
+                COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
+                        git reset --hard
+            )
+        endif()
     endif()
     
     # 下载并构建 FFmpeg
@@ -269,7 +286,7 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
         CONFIGURE_COMMAND
             ${FFMPEG_PRE_CONFIGURE_COMMAND}
             COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
-                    ${BASH_EXECUTABLE} -c "bash configure ${FFMPEG_CONFIGURE_OPTIONS_STR}"
+                    ${BASH_EXECUTABLE} -c "chmod a+x configure && bash configure ${FFMPEG_CONFIGURE_OPTIONS_STR}"
 
         # 构建命令
         BUILD_COMMAND
