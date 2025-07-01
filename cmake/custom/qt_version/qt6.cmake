@@ -41,8 +41,22 @@ if (ENABLE_SVG)
     )
 endif (ENABLE_SVG)
 
+if (ENABLE_MEDIA_PLAYER)
+    find_package(Qt6 COMPONENTS Multimedia MultimediaWidgets REQUIRED)
+    list(APPEND QT_DEPEND_LIBS
+        Qt6::Multimedia
+        Qt6::MultimediaWidgets 
+    ) 
+endif()
+
 if (ENABLE_OPENGL)
     add_definitions(-DOPENGL_ENABLE)
+    
+    find_package(Qt6 COMPONENTS OpenGL OpenGLWidgets REQUIRED)
+    list(APPEND QT_DEPEND_LIBS
+        Qt6::OpenGL
+        Qt6::OpenGLWidgets
+    )
 
     if(ANDROID)
         # Android 使用 OpenGL ES
@@ -63,12 +77,6 @@ if (ENABLE_OPENGL)
             OpenGL::GLU
         )
     endif()
-
-    find_package(Qt6 COMPONENTS OpenGL OpenGLWidgets REQUIRED)
-    list(APPEND QT_DEPEND_LIBS
-        Qt6::OpenGL
-        Qt6::OpenGLWidgets
-    )
 endif (ENABLE_OPENGL)
 
 if (ENABLE_AUTO_Linguist)

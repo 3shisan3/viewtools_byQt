@@ -31,7 +31,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/thirddepend.cmake)
 
 # 打印关键信息
 message(STATUS "CMAKE_BUILD_TYPE:${CMAKE_BUILD_TYPE}")
-message(STATUS "DEPEND_LIBS:${QT_DEPEND_LIBS}")
+message(STATUS "DEPEND_LIBS:${QT_DEPEND_LIBS}  ${THIRD_DEPEND_LIBS}")
 
 # 源码目录
 set(SOURCE_CODE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -49,7 +49,7 @@ file(GLOB PROJECT_SRCS ${SOURCE_CODE_DIR}/main.cpp)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/code.cmake)
 
 # 指定库文件搜索路径
-link_directories(${3RD_DIR}/lib)
+link_directories(${3RD_DIR})
 
 # 所有平台共用的源文件
 set(TARGET_SOURCES
@@ -62,6 +62,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/platform.cmake)
 #依赖库
 target_link_libraries(${PROJECT_NAME} PRIVATE
     ${QT_DEPEND_LIBS}
+    ${THIRD_DEPEND_LIBS}
 )
 
 # 安装

@@ -210,6 +210,8 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
 
         # 设置Android特定选项
         list(APPEND FFMPEG_CONFIGURE_OPTIONS
+            --disable-avdevice
+            --enable_jni
             --target-os=android
             --arch=${FFMPEG_ARCH}
             --cpu=${FFMPEG_CPU}
@@ -320,3 +322,8 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
         add_dependencies(FFmpeg::${component} ffmpeg)
     endforeach()
 endif()
+
+# 添加 FFmpeg 组件到第三方依赖库列表
+foreach(component IN LISTS FFMPEG_COMPONENTS)
+    list(APPEND THIRD_DEPEND_LIBS FFmpeg::${component})
+endforeach()

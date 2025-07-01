@@ -25,3 +25,11 @@ if (ENABLE_OPENGL)
     )
     list(APPEND PROJECT_SRCS ${OPENGL_SRCS})
 endif(ENABLE_OPENGL)
+
+if (ENABLE_MEDIA_PLAYER)
+    file(GLOB_RECURSE PLAYER_SRCS
+        ${SOURCE_CODE_DIR}/view/widget/player/*.cpp
+        ${SOURCE_CODE_DIR}/view/window/player/*.cpp
+    )
+    list(APPEND PROJECT_SRCS ${PLAYER_SRCS})
+endif(ENABLE_MEDIA_PLAYER)

@@ -44,9 +44,22 @@ if (ENABLE_SVG)
     )
 endif (ENABLE_SVG)
 
+if (ENABLE_MEDIA_PLAYER)
+    find_package(Qt5Multimedia    REQUIRED)
+    find_package(Qt5MultimediaWidgets      REQUIRED)
+
+    list(APPEND QT_DEPEND_LIBS
+        Qt5::Multimedia
+        Qt5::MultimediaWidgets 
+    ) 
+endif()
+
 if (ENABLE_OPENGL)
     add_definitions(-DOPENGL_ENABLE)
 
+    find_package(Qt5OpenGL        REQUIRED)
+    list(APPEND QT_DEPEND_LIBS Qt5::OpenGL)
+    
     if(ANDROID)
         # Android 使用 OpenGL ES
         find_library(OPENGLES2_LIBRARY GLESv2)
@@ -66,9 +79,6 @@ if (ENABLE_OPENGL)
             OpenGL::GLU
         )
     endif()
-
-    find_package(Qt5OpenGL        REQUIRED)
-    list(APPEND QT_DEPEND_LIBS Qt5::OpenGL)
 endif (ENABLE_OPENGL)
 
 if (ENABLE_AUTO_Linguist)
