@@ -45,6 +45,16 @@ else()
     endif()
 endif()
 
+# 补充三方库和主项目的依赖关系
+if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
+    message(STATUS "Building ${PROJECT_NAME} depend FFmpeg ${FFMPEG_VERSION}")
+    if(TARGET ffmpeg_build_complete)
+        add_dependencies(${PROJECT_NAME} ffmpeg_build_complete)
+    elseif(TARGET ffmpeg)
+        add_dependencies(${PROJECT_NAME} ffmpeg)
+    endif()
+endif()
+
 # 构建后运行依赖打包命令
 if(WIN32)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
