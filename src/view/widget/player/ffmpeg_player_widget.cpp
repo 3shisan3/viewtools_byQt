@@ -1,3 +1,5 @@
+#ifdef CAN_USE_FFMPEG
+
 #include "ffmpeg_player_widget.h"
 
 #include <QDebug>
@@ -781,3 +783,5 @@ void FFmpegPlayer::resizeEvent(QResizeEvent *event)
     m_displayLabel_->resize(event->size());
     QWidget::resizeEvent(event);
 }
+
+#endif

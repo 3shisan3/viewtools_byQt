@@ -8,6 +8,9 @@
 #include "example.h"
 #include "data/translation_manager.h"
 #include "event/event_dispatcher.h"
+#ifdef MEDIA_PLAYER_ENABLE
+#include "view/window/player/player_window.h"
+#endif
 
 ExampleWindow::ExampleWindow(QWidget *parent)
     : QWidget(parent)
@@ -29,6 +32,9 @@ ExampleWindow::ExampleWindow(QWidget *parent)
     // 连接信号槽
     connect(qmlBtn, &QPushButton::clicked, this, &ExampleWindow::showQmlWindow);
     connect(qssBtn, &QPushButton::clicked, this, &ExampleWindow::showQssWindow);
+
+    // 额外功能界面添加
+    extraFeatures();
 
     // 获取测试使用的语言包名，并去进行选择
     QString languageName = SingletonTemplate<SsTranslationManager>::getSingletonInstance().getLanguages().back();
@@ -76,5 +82,28 @@ void ExampleWindow::showQssWindow()
     qssWindow->show();
     this->hide();
 }
+
+void ExampleWindow::extraFeatures()
+{
+    QVBoxLayout *layout = qobject_cast<QVBoxLayout*>(this->layout());
+    if(!layout) return;
+
+#ifdef MEDIA_PLAYER_ENABLE
+    QPushButton *playerBtn = new QPushButton(tr("open player window"));
+    layout->addWidget(playerBtn);
+    connect(playerBtn, &QPushButton::clicked, this, [this]() {
+#ifdef CAN_USE_FFMPEG
+        PlayerWindow *playerWindow = new PlayerWindow(nullptr, PlayerWidget::BY_FFMPEG);
+#else
+        PlayerWindow *playerWindow = new PlayerWindow(nullptr, PlayerWidget::BY_QMEDIA);
+#endif
+        playerWindow->setWindowTitle("Media Player");
+        playerWindow->resize(800, 600);
+        playerWindow->show();
+        // this->hide();
+    });
+#endif
+}
+
 
 #endif

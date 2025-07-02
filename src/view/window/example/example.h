@@ -33,6 +33,9 @@ private slots:
     void showQssWindow();
 
 private:
+    void extraFeatures();
+
+private:
     QPushButton *qmlBtn;
     QPushButton *qssBtn;
 };

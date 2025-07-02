@@ -45,9 +45,10 @@ if (ENABLE_SVG)
 endif (ENABLE_SVG)
 
 if (ENABLE_MEDIA_PLAYER)
+    add_definitions(-DMEDIA_PLAYER_ENABLE)
+
     find_package(Qt5Multimedia    REQUIRED)
     find_package(Qt5MultimediaWidgets      REQUIRED)
-
     list(APPEND QT_DEPEND_LIBS
         Qt5::Multimedia
         Qt5::MultimediaWidgets 

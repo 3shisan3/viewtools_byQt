@@ -33,6 +33,7 @@ PlayerWindow::PlayerWindow(QWidget *parent, PlayerWidget type)
         setWindowTitle(tr("Video Player By QMediaPlayer"));
     }
         break;
+#ifdef CAN_USE_FFMPEG
     case PlayerWidget::BY_FFMPEG:
     {
         m_playerWidget_ = new FFmpegPlayer(this);
@@ -40,6 +41,7 @@ PlayerWindow::PlayerWindow(QWidget *parent, PlayerWidget type)
         setWindowTitle(tr("Video Player By FFmpeg"));
     }
         break;
+#endif
     default:
         break;
     }

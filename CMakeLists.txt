@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.10)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/option.cmake)
 
 # 设置项目名
-project(viewtools)
+project(viewtools_byQt)
 
 # 设置默认的编译类型
 if(NOT CMAKE_BUILD_TYPE)

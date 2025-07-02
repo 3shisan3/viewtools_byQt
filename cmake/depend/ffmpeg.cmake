@@ -390,6 +390,7 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
         
         # 只有在需要构建时才添加依赖
         if(NOT FFMPEG_ALREADY_BUILT)
+            message(STATUS "FFmpeg needs to be built, add dependencies")
             add_dependencies(FFmpeg::${component} ffmpeg_build_complete)
         endif()
     endforeach()

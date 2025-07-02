@@ -40,23 +40,32 @@ else()
     # Unix-like 平台的特定设置（例如 RPATH）
     if (UNIX AND NOT APPLE)
         set_target_properties(${PROJECT_NAME} PROPERTIES
-            INSTALL_RPATH "$ORIGIN"
+            INSTALL_RPATH "$ORIGIN;$ORIGIN/lib;$ORIGIN/thirdlib;$ORIGIN/../lib"
         )
-    endif()
-endif()
-
-# 补充三方库和主项目的依赖关系
-if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
-    message(STATUS "Building ${PROJECT_NAME} depend FFmpeg ${FFMPEG_VERSION}")
-    if(TARGET ffmpeg_build_complete)
-        add_dependencies(${PROJECT_NAME} ffmpeg_build_complete)
-    elseif(TARGET ffmpeg)
-        add_dependencies(${PROJECT_NAME} ffmpeg)
     endif()
 endif()
 
 # 构建后运行依赖打包命令
 if(WIN32)
+    if (MINGW)
+        # 获取 MinGW 的 bin 目录（存放运行时 DLL）
+        get_filename_component(MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        get_filename_component(MINGW_BIN_DIR "${MINGW_BIN_DIR}/../bin" ABSOLUTE)
+        # 设置部署脚本路径
+        set(DEPLOY_SCRIPT "${CMAKE_SOURCE_DIR}/script/tools/deploy_mingw_dlls.sh")
+
+        # 构建后分析依赖并复制
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "Deploying MinGW runtime DLLs..."
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${EXECUTABLE_OUTPUT_PATH}"
+            COMMAND bash "${DEPLOY_SCRIPT}"
+                "${MINGW_BIN_DIR}"
+                "${EXECUTABLE_OUTPUT_PATH}"
+                "$<TARGET_FILE:${PROJECT_NAME}>"
+            COMMENT "Copying required MinGW runtime DLLs..."
+        )
+    endif()
+
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E echo "Starting Qt deployment..."
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/bin"
@@ -103,4 +112,9 @@ elseif(ANDROID)
         COMMAND ${CMAKE_COMMAND} -E echo "Android build complete - APK should contain all dependencies"
         COMMENT "Android deployment handled by Qt build system..."
     )
+endif()
+
+# 添加运行以来的三方库部署逻辑
+if(ENABLE_MEDIA_PLAYER AND NOT ANDROID)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/depend/ffmpeg_runtime.cmake)
 endif()

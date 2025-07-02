@@ -42,6 +42,8 @@ if (ENABLE_SVG)
 endif (ENABLE_SVG)
 
 if (ENABLE_MEDIA_PLAYER)
+    add_definitions(-DMEDIA_PLAYER_ENABLE)
+
     find_package(Qt6 COMPONENTS Multimedia MultimediaWidgets REQUIRED)
     list(APPEND QT_DEPEND_LIBS
         Qt6::Multimedia

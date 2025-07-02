@@ -54,9 +54,6 @@ public slots:
     // 错误信息整合弹窗提示
     void errorInfoShow(const QString &errorInfo);
 
-private:
-    
-
 };
 
 

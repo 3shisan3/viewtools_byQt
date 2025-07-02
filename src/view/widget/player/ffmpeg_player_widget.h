@@ -14,6 +14,8 @@ Version history
 
 *****************************************************************/
 
+#ifdef CAN_USE_FFMPEG
+
 #ifndef _FFMPEG_PLAYER_WIDGET_H
 #define _FFMPEG_PLAYER_WIDGET_H
 
@@ -155,3 +157,5 @@ private:
 };
 
 #endif // _FFMPEG_PLAYER_WIDGET_H
+
+#endif // CAN_USE_FFMPEG
