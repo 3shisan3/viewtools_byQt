@@ -328,6 +328,12 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
             LOG_INSTALL 1
             LOG_OUTPUT_ON_FAILURE TRUE
         )
+        
+        # 构建后更新目标属性
+        add_custom_command(TARGET ffmpeg POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/depend/ffmpeg_updateTargets.cmake"
+            COMMENT "Updating FFmpeg target properties"
+        )
 
         # 创建虚拟目标确保构建顺序
         add_custom_target(ffmpeg_build_complete ALL DEPENDS ffmpeg)
@@ -355,13 +361,7 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
             else()
                 message(WARNING "FFmpeg include directory not found at ${FFMPEG_INCLUDE_DIR}")
             endif()
-        else()
-            # 如果尚未构建，添加一个自定义命令来设置包含目录
-            add_custom_command(TARGET ffmpeg POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E make_directory "${FFMPEG_INCLUDE_DIR}"
-                COMMENT "Creating FFmpeg include directory"
-            )
-            
+        else()   
             # 延迟设置包含目录
             file(MAKE_DIRECTORY "${FFMPEG_INCLUDE_DIR}")
             set_target_properties(FFmpeg::${component} PROPERTIES
@@ -387,11 +387,16 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
                 IMPORTED_LOCATION "${FFMPEG_LIB_PATH}"
             )
         endif()
-        
-        # 只有在需要构建时才添加依赖
-        if(NOT FFMPEG_ALREADY_BUILT)
-            message(STATUS "FFmpeg needs to be built, add dependencies")
+    endforeach()
+endif()
+
+# 编写依赖关系
+if(NOT FFMPEG_ALREADY_BUILT)
+    # 确保所有 FFmpeg 目标都依赖于 ffmpeg_build_complete
+    foreach(component IN LISTS FFMPEG_COMPONENTS)
+        if(TARGET FFmpeg::${component} AND TARGET ffmpeg_build_complete)
             add_dependencies(FFmpeg::${component} ffmpeg_build_complete)
+            message(STATUS "Added dependency: FFmpeg::${component} -> ffmpeg_build_complete")
         endif()
     endforeach()
 endif()
