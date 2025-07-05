@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/res">
-
+        <file>image/pupupu.png</file>
+        <file>image/timer.jpg</file>
     </qresource>
 </RCC>

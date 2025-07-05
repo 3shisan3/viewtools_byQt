@@ -4,6 +4,8 @@ file(GLOB_RECURSE BASE_SRCS
     ${SOURCE_CODE_DIR}/data/*.cpp
     ${SOURCE_CODE_DIR}/event/*.cpp
     ${SOURCE_CODE_DIR}/utils/*.cpp
+    
+    ${SOURCE_CODE_DIR}/view/component/*.cpp
 )
 list(APPEND PROJECT_SRCS ${BASE_SRCS})
 
