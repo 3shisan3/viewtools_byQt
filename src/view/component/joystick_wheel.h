@@ -19,6 +19,7 @@ Version history
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPaintEvent>
+#include <QTouchEvent>
 #include <QWidget>
 
 class SsJoystickWheel : public QWidget
@@ -37,6 +38,8 @@ public:
     void setInnerCirRadius(uint radius);
 
 protected:
+    bool event(QEvent *event) override;
+
     // 绘制事件
     void paintEvent(QPaintEvent *event) override;
 
@@ -50,12 +53,16 @@ protected:
 
 private:
     void updatePosition();
+    void handleTouchPoint(const QPointF &pos, bool isRelease = false);
 
 private:
     QPoint m_bgWheel_xy;          // 背景轮盘坐标
     QPoint m_rockerBar_xy;        // 摇杆所处坐标
-    std::pair<QString, QString> m_texturePath;    // 纹理组合 first 为底图
+    std::pair<QPixmap, QPixmap> m_texture;        // 纹理组合 first 为底图
     std::pair<uint, uint> m_cirRadius;            // 尺寸半径组合
+
+    bool m_hasPressed;            // 控制操作状态
+    int m_activeTouchId;          // 当前激活的触控点ID (-1表示无)(解决多点触控干扰问题)
 
 };
 
