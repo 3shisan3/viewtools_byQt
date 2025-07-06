@@ -69,7 +69,11 @@ bool SsJoystickWheel::event(QEvent *event)
     case QEvent::TouchCancel:
     {
         QTouchEvent *touchEvent = static_cast<QTouchEvent *>(event);
+#if QT_VERSION_MAJOR >= 6
+        const auto &touchPoints = touchEvent->points();
+#else
         const auto &touchPoints = touchEvent->touchPoints();
+#endif
 
         // 处理激活中的触控点（优先）
         if (m_activeTouchId != -1)
@@ -78,7 +82,11 @@ bool SsJoystickWheel::event(QEvent *event)
             {
                 if (point.id() == m_activeTouchId)
                 {
+#if QT_VERSION_MAJOR >= 6
+                    handleTouchPoint(point.position(), event->type() == QEvent::TouchEnd);
+#else
                     handleTouchPoint(point.pos(), event->type() == QEvent::TouchEnd);
+#endif
                     if (event->type() == QEvent::TouchEnd)
                     {
                         m_activeTouchId = -1; // 释放激活点
@@ -95,12 +103,18 @@ bool SsJoystickWheel::event(QEvent *event)
         {
             for (const auto &point : touchPoints)
             {
-                double dx = point.pos().x() - m_bgWheel_xy.x();
-                double dy = point.pos().y() - m_bgWheel_xy.y();
+#if QT_VERSION_MAJOR >= 6
+                auto p = point.position();
+#else
+                auto p = point.pos();
+#endif              
+
+                double dx = p.x() - m_bgWheel_xy.x();
+                double dy = p.y() - m_bgWheel_xy.y();
                 if (dx * dx + dy * dy <= m_cirRadius.first * m_cirRadius.first)
                 {
                     m_activeTouchId = point.id();
-                    handleTouchPoint(point.pos());
+                    handleTouchPoint(p);
                     return true;
                 }
             }
@@ -198,7 +212,7 @@ void SsJoystickWheel::mouseMoveEvent(QMouseEvent *event)
 void SsJoystickWheel::mousePressEvent(QMouseEvent *event)
 {
     if (m_activeTouchId != -1) return; // 触摸优先
-    
+
     // 获取鼠标操作位置
     QPoint mousePos = event->pos();
 

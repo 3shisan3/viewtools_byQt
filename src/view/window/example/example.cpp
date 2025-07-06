@@ -1,5 +1,6 @@
 #ifdef EXAMPLE_ON
 
+#include <QDialog>
 #include <QLineEdit>
 #include <QLabel>
 #include <QVBoxLayout>
@@ -11,6 +12,7 @@
 #ifdef MEDIA_PLAYER_ENABLE
 #include "view/window/player/player_window.h"
 #endif
+#include "view/component/joystick_wheel.h"
 
 ExampleWindow::ExampleWindow(QWidget *parent)
     : QWidget(parent)
@@ -103,6 +105,28 @@ void ExampleWindow::extraFeatures()
         // this->hide();
     });
 #endif
+
+    // 添加轮盘组件按钮
+    QPushButton *rouletteBtn = new QPushButton(tr("open roulette"));
+    layout->addWidget(rouletteBtn);
+    connect(rouletteBtn, &QPushButton::clicked, this, []() {
+        // 创建轮盘对话框
+        QDialog *rouletteDialog = new QDialog;
+        rouletteDialog->setWindowTitle("Roulette");
+        rouletteDialog->resize(400, 400);
+        
+        // 创建布局和轮盘组件
+        QVBoxLayout *dialogLayout = new QVBoxLayout(rouletteDialog);
+        SsJoystickWheel *roulette = new SsJoystickWheel;
+        dialogLayout->addWidget(roulette);
+        
+        // 设置为模态对话框
+        rouletteDialog->setModal(true);
+        rouletteDialog->exec();
+        
+        // 对话框关闭后自动删除
+        rouletteDialog->deleteLater();
+    });
 }
 
 
