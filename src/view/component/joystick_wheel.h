@@ -37,6 +37,9 @@ public:
     void setOuterCirRadius(uint radius);
     void setInnerCirRadius(uint radius);
 
+signals:
+    void curRockerBarPos(QPoint pos);
+
 protected:
     bool event(QEvent *event) override;
 

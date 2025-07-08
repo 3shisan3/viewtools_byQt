@@ -117,8 +117,10 @@ void ExampleWindow::extraFeatures()
         
         // 创建布局和轮盘组件
         QVBoxLayout *dialogLayout = new QVBoxLayout(rouletteDialog);
-        SsJoystickWheel *roulette = new SsJoystickWheel;
-        dialogLayout->addWidget(roulette);
+        SsJoystickWheel *roulette1 = new SsJoystickWheel;
+        SsJoystickWheel *roulette2 = new SsJoystickWheel;
+        dialogLayout->addWidget(roulette1);
+        dialogLayout->addWidget(roulette2);
         
         // 设置为模态对话框
         rouletteDialog->setModal(true);

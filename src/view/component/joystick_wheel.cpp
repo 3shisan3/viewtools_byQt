@@ -74,7 +74,6 @@ bool SsJoystickWheel::event(QEvent *event)
 #else
         const auto &touchPoints = touchEvent->touchPoints();
 #endif
-
         // 处理激活中的触控点（优先）
         if (m_activeTouchId != -1)
         {
@@ -152,6 +151,8 @@ void SsJoystickWheel::handleTouchPoint(const QPointF &pos, bool isRelease)
             m_rockerBar_xy.setY(m_bgWheel_xy.y() + dy * ratio);
         }
     }
+
+    emit curRockerBarPos(m_rockerBar_xy);
     update(); // 触发重绘
 }
 
@@ -187,26 +188,7 @@ void SsJoystickWheel::mouseMoveEvent(QMouseEvent *event)
     if (!m_hasPressed)
         return;
 
-    // 获取鼠标操作位置
-    QPoint mousePos = event->pos();
-    // 判断是否超出最大范围
-    double distance = sqrt(pow(mousePos.x() - m_bgWheel_xy.x(), 2) + pow(mousePos.y() - m_bgWheel_xy.y(), 2));
-    double maxDis = m_cirRadius.first;
-    if (distance <= maxDis)
-    {
-        m_rockerBar_xy = mousePos;
-    }
-    else
-    {
-        // 获取偏移角度
-        double angle = atan2(mousePos.y() - m_bgWheel_xy.y(), mousePos.x() - m_bgWheel_xy.x());
-        m_rockerBar_xy = QPoint(
-                m_bgWheel_xy.x() + maxDis * cos(angle),
-                m_bgWheel_xy.y() + maxDis * sin(angle)
-            );
-    }
-
-    update();
+    handleTouchPoint(event->pos());
 }
 
 void SsJoystickWheel::mousePressEvent(QMouseEvent *event)
@@ -234,5 +216,6 @@ void SsJoystickWheel::mouseReleaseEvent(QMouseEvent *event)
     m_rockerBar_xy.setX(m_bgWheel_xy.x());
     m_rockerBar_xy.setY(m_bgWheel_xy.y());
 
+    emit curRockerBarPos(m_rockerBar_xy);
     update();
 }
