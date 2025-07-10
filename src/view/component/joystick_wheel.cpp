@@ -59,6 +59,11 @@ void SsJoystickWheel::setInnerCirRadius(uint radius)
     update();
 }
 
+uint SsJoystickWheel::radius() const
+{
+    return m_cirRadius.first;
+}
+
 bool SsJoystickWheel::event(QEvent *event)
 {
     switch (event->type())
@@ -152,7 +157,7 @@ void SsJoystickWheel::handleTouchPoint(const QPointF &pos, bool isRelease)
         }
     }
 
-    emit curRockerBarPos(m_rockerBar_xy);
+    emit curRockerBarPos(m_rockerBar_xy, m_bgWheel_xy);
     update(); // 触发重绘
 }
 
@@ -216,6 +221,6 @@ void SsJoystickWheel::mouseReleaseEvent(QMouseEvent *event)
     m_rockerBar_xy.setX(m_bgWheel_xy.x());
     m_rockerBar_xy.setY(m_bgWheel_xy.y());
 
-    emit curRockerBarPos(m_rockerBar_xy);
+    emit curRockerBarPos(m_rockerBar_xy, m_bgWheel_xy);
     update();
 }

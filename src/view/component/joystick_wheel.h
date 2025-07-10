@@ -37,8 +37,11 @@ public:
     void setOuterCirRadius(uint radius);
     void setInnerCirRadius(uint radius);
 
+    // 获取轮盘一些信息
+    uint radius() const;        // 当前轮盘半径
+
 signals:
-    void curRockerBarPos(QPoint pos);
+    void curRockerBarPos(QPoint pos, QPoint center);
 
 protected:
     bool event(QEvent *event) override;
