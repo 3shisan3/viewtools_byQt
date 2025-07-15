@@ -49,7 +49,14 @@ if (ENABLE_MEDIA_PLAYER)
         Qt6::Multimedia
         Qt6::MultimediaWidgets 
     ) 
-endif()
+endif (ENABLE_MEDIA_PLAYER)
+
+if (ENABLE_MAP_COMPONENT)
+    add_definitions(-DMAP_COMPONENT_ENABLE)
+
+    find_package(Qt6 COMPONENTS Positioning REQUIRED)
+    list(APPEND QT_DEPEND_LIBS Qt6::Positioning) 
+endif (ENABLE_MAP_COMPONENT)
 
 if (ENABLE_OPENGL)
     add_definitions(-DOPENGL_ENABLE)

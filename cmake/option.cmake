@@ -16,3 +16,6 @@ option(ENABLE_AUTO_Linguist "automatically manage translation updates" OFF)
 
 # 启用播放器模块
 option(ENABLE_MEDIA_PLAYER "using video streaming playback module" ON)
+
+# 启用地图组件模块
+option(ENABLE_MAP_COMPONENT "using map component" ON)

@@ -17,7 +17,7 @@ if (EXAMPLE_PROJ)
         ${SOURCE_CODE_DIR}/view/window/example/*.cpp
     )
     list(APPEND PROJECT_SRCS ${EXAMPLE_SRCS})
-endif(EXAMPLE_PROJ)
+endif (EXAMPLE_PROJ)
 
 if (ENABLE_OPENGL)
     file(GLOB_RECURSE OPENGL_SRCS
@@ -26,7 +26,7 @@ if (ENABLE_OPENGL)
         ${SOURCE_CODE_DIR}/view/window/opengl/*.cpp
     )
     list(APPEND PROJECT_SRCS ${OPENGL_SRCS})
-endif(ENABLE_OPENGL)
+endif (ENABLE_OPENGL)
 
 if (ENABLE_MEDIA_PLAYER)
     file(GLOB_RECURSE PLAYER_SRCS
@@ -34,4 +34,12 @@ if (ENABLE_MEDIA_PLAYER)
         ${SOURCE_CODE_DIR}/view/window/player/*.cpp
     )
     list(APPEND PROJECT_SRCS ${PLAYER_SRCS})
-endif(ENABLE_MEDIA_PLAYER)
+endif (ENABLE_MEDIA_PLAYER)
+
+if (ENABLE_MAP_COMPONENT)
+    file(GLOB_RECURSE MAP_SRCS
+        ${SOURCE_CODE_DIR}/view/widget/map/*.cpp
+        # ${SOURCE_CODE_DIR}/view/window/map/*.cpp
+    )
+    list(APPEND PROJECT_SRCS ${MAP_SRCS})
+endif (ENABLE_MAP_COMPONENT)

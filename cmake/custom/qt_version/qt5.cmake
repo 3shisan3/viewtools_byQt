@@ -53,12 +53,19 @@ if (ENABLE_MEDIA_PLAYER)
         Qt5::Multimedia
         Qt5::MultimediaWidgets 
     ) 
-endif()
+endif (ENABLE_MEDIA_PLAYER)
+
+if (ENABLE_MAP_COMPONENT)
+    add_definitions(-DMAP_COMPONENT_ENABLE)
+
+    find_package(Qt5Positioning  REQUIRED)
+    list(APPEND QT_DEPEND_LIBS Qt5::Positioning) 
+endif (ENABLE_MAP_COMPONENT)
 
 if (ENABLE_OPENGL)
     add_definitions(-DOPENGL_ENABLE)
 
-    find_package(Qt5OpenGL        REQUIRED)
+    find_package(Qt5OpenGL       REQUIRED)
     list(APPEND QT_DEPEND_LIBS Qt5::OpenGL)
     
     if(ANDROID)

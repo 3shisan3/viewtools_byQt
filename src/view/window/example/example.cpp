@@ -13,6 +13,9 @@
 #include "view/window/player/player_window.h"
 #endif
 #include "view/component/joystick_wheel.h"
+#ifdef MAP_COMPONENT_ENABLE
+#include "view/widget/map/marine_map_component.h"
+#endif
 
 ExampleWindow::ExampleWindow(QWidget *parent)
     : QWidget(parent)
@@ -129,6 +132,40 @@ void ExampleWindow::extraFeatures()
         // 对话框关闭后自动删除
         rouletteDialog->deleteLater();
     });
+
+#ifdef MAP_COMPONENT_ENABLE
+    // 增加地图组件显示
+    QPushButton *mapBtn = new QPushButton(tr("open marine  map component"));
+    layout->addWidget(mapBtn);
+    connect(mapBtn, &QPushButton::clicked, this, [this]() {
+        QDialog *mapDialog = new QDialog;
+        mapDialog->setWindowTitle("Marine Map");
+        mapDialog->resize(800, 600);
+        
+        QVBoxLayout *layout = new QVBoxLayout(mapDialog);
+        
+        // 创建地图组件
+        MarineMapComponent *mapComponent = new MarineMapComponent(mapDialog);
+        layout->addWidget(mapComponent);
+        
+        // 设置船舶位置 (示例坐标)
+        mapComponent->updateShipData(QGeoCoordinate(21.48341372, 109.05621073), 23.5);
+        
+        // 设置航线
+        QVector<QGeoCoordinate> route;
+        route << QGeoCoordinate(21.48341372, 109.05621073)
+            << QGeoCoordinate(21.49341372, 109.07621073)
+            << QGeoCoordinate(21.50341372, 109.08621073);
+        mapComponent->setRoute(route);
+        
+        // 设置为模态对话框
+        mapDialog->setModal(true);
+        mapDialog->exec();
+        
+        // 对话框关闭后自动删除
+        mapDialog->deleteLater();
+    });
+#endif
 }
 
 
