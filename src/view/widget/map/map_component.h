@@ -3,12 +3,12 @@
 #include <QWidget>
 #include <QGeoCoordinate>
 
+#include "view/widget/map/layers/ship_layer.h"
+#include "view/widget/map/layers/route_layer.h"
 #include "view/widget/map/mapengine/online_tile_loader.h"
 #include "view/widget/map/mapengine/disk_cache_manager.h"
 #include "view/widget/map/mapengine/memory_cache.h"
 #include "view/widget/map/render/map_renderer.h"
-#include "view/widget/map/layers/ship_layer.h"
-#include "view/widget/map/layers/route_layer.h"
 
 class MarineMapComponent : public QWidget {
     Q_OBJECT

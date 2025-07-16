@@ -13,11 +13,14 @@ MarineMapComponent::MarineMapComponent(QWidget *parent) : QWidget(parent)
 
     // 初始化瓦片加载器 (使用高德海洋地图)
     m_tileLoader = new SsOnlineTileLoader(this);
-    // https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoiM3NoaXNhbjMiLCJhIjoiY20wMHRhbnQzMHFmejJtb29ibzk5dzNjaCJ9.CXBCh481VYmC6PPT7jJGSA
+    // https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
     // m_tileLoader->setUrlTemplate("https://webst02.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}");
-    m_tileLoader->setUrlTemplate("https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoiM3NoaXNhbjMiLCJhIjoiY20wMHRhbnQzMHFmejJtb29ibzk5dzNjaCJ9.CXBCh481VYmC6PPT7jJGSA");
-    connect(m_tileLoader, &SsOnlineTileLoader::tileReceived,
-            this, &MarineMapComponent::handleTileReceived);
+    // m_tileLoader->setUrlTemplate("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png");
+    m_tileLoader->setUrlTemplate(
+        "https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/{z}/{x}/{y}?access_token="
+        "pk.eyJ1IjoiM3NoaXNhbjMiLCJhIjoiY20wMHRhbnQzMHFmejJtb29ibzk5dzNjaCJ9.CXBCh481VYmC6PPT7jJGSA"
+    );
+    connect(m_tileLoader, &SsOnlineTileLoader::tileReceived, this, &MarineMapComponent::handleTileReceived);
 
     // 初始化渲染器
     m_renderer = new MapRenderer(this);
