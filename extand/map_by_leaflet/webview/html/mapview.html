@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Leaflet Map</title>
+    <!-- 引入用于检测网络状态的JavaScript -->  
+    <script src="qrc:/map_by_leaflet/webview/offline/offline.min.js"></script>
+    <!-- 使用本地 Leaflet 资源 -->
+    <link rel="stylesheet" href="qrc:/map_by_leaflet/webview/leaflet/leaflet.css" />
+    <script src="qrc:/map_by_leaflet/webview/leaflet/leaflet.js"></script>
+    <!-- 引入 Qt WebChannel -->
+    <script src="qrc:/map_by_leaflet/webview/qtwebchannel/qwebchannel.js"></script>
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="map"></div>
+
+    <script>
+        // 初始化地图和标记
+        var map = L.map('map').setView([0, 0], 13);
+        var marker = L.marker([0, 0]).addTo(map);
+        
+        // 定义图层
+        var onlineLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '©3shisan3'
+        });
+        
+        var offlineLayer = L.tileLayer('file:///path/to/offline/tiles/{z}/{x}/{y}.png', {
+            maxzoom: 18,
+            attribution: '©3shisan3'
+        });
+
+        // 默认添加在线图层
+        onlineLayer.addTo(map);
+
+        // Qt 通信对象
+        var backend = null;
+        
+        // 初始化 WebChannel
+        window.onload = function() {
+            new QWebChannel(qt.webChannelTransport, function(channel) {
+                backend = channel.objects.backend;
+                
+                // 连接信号
+                backend.locationInitialized.connect(function(locationData) {
+                    handleLocationInit(locationData);
+                });
+                
+                backend.locationUpdated.connect(function(updateData) {
+                    handleLocationUpdate(updateData);
+                });
+                
+                backend.networkStatusChanged.connect(function(isOnline) {
+                    if (isOnline) {
+                        if (map.hasLayer(offlineLayer)) {
+                            map.removeLayer(offlineLayer);
+                            onlineLayer.addTo(map);
+                        }
+                    } else {
+                        if (map.hasLayer(onlineLayer)) {
+                            map.removeLayer(onlineLayer);
+                            offlineLayer.addTo(map);
+                        }
+                    }
+                });
+                
+                // 通知后端页面已加载完成
+                backend.pageLoaded();
+            });
+        };
+        
+        // 处理初始位置数据
+        function handleLocationInit(locationData) {
+            var loc = locationData.location;
+            map.setView([loc.lat, loc.lng], 13);
+            marker.setLatLng([loc.lat, loc.lng]);
+            
+            // 绘制历史位置
+            locationData.history.forEach(function(location) {
+                L.circleMarker([location.lat, location.lng], {
+                    radius: 5,
+                    color: 'red',
+                    fillColor: '#f03',
+                    fillOpacity: 0.5
+                }).addTo(map);
+            });
+        }
+        
+        // 处理位置更新
+        function handleLocationUpdate(updateData) {
+            var loc = updateData.location;
+            map.setView([loc.lat, loc.lng]);
+            marker.setLatLng([loc.lat, loc.lng]);
+            
+            L.circleMarker([updateData.history.lat, updateData.history.lng], {
+                radius: 5,
+                color: 'red',
+                fillColor: '#f03',
+                fillOpacity: 0.5
+            }).addTo(map);
+        }
+    </script>
+</body>
+</html>

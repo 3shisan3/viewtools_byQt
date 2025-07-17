@@ -43,6 +43,9 @@ file(GLOB PROJECT_QRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/res/res.qrc
     ${CMAKE_CURRENT_SOURCE_DIR}/ui/ui.qrc
 )
+if (USE_WEB_LEAFLET)
+    list(APPEND PROJECT_QRCS ${CMAKE_CURRENT_SOURCE_DIR}/extand/map_by_leaflet/resources.qrc)
+endif()
 
 # 设置 UI 文件
 file(GLOB_RECURSE PROJECT_UIS
