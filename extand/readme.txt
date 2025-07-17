@@ -1,0 +1,3 @@
+1、map_by_leaflet
+功能侧重依赖 QWebEngine，需要额外进行模块安装，windows下依赖msvc，跨平台均需安装各自版本
+暂停拓展

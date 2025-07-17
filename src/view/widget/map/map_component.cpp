@@ -1,4 +1,4 @@
-#include "marine_map_component.h"
+#include "map_component.h"
 
 #include <QPainter>
 #include <QWheelEvent>

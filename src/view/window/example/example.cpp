@@ -14,7 +14,7 @@
 #endif
 #include "view/component/joystick_wheel.h"
 #ifdef MAP_COMPONENT_ENABLE
-#include "view/widget/map/marine_map_component.h"
+#include "view/widget/map/map_component.h"
 #endif
 
 ExampleWindow::ExampleWindow(QWidget *parent)

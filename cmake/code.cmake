@@ -42,4 +42,11 @@ if (ENABLE_MAP_COMPONENT)
         # ${SOURCE_CODE_DIR}/view/window/map/*.cpp
     )
     list(APPEND PROJECT_SRCS ${MAP_SRCS})
+
+    if (USE_WEB_LEAFLET)
+        file(GLOB_RECURSE LEAFLET_MAP_SRCS
+            ${CMAKE_CURRENT_SOURCE_DIR}/extand/map_by_leaflet/*.cpp
+        )
+        list(APPEND PROJECT_SRCS ${LEAFLET_MAP_SRCS})
+    endif()
 endif (ENABLE_MAP_COMPONENT)

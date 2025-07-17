@@ -56,6 +56,15 @@ if (ENABLE_MAP_COMPONENT)
 
     find_package(Qt6 COMPONENTS Positioning REQUIRED)
     list(APPEND QT_DEPEND_LIBS Qt6::Positioning) 
+
+    if (USE_WEB_LEAFLET)
+        find_package(Qt6 COMPONENTS Network WebChannel WebView REQUIRED)
+        list(APPEND QT_DEPEND_LIBS
+            Qt6::Network
+            Qt6::WebChannel
+            Qt6::WebView
+        ) 
+    endif (USE_WEB_LEAFLET)
 endif (ENABLE_MAP_COMPONENT)
 
 if (ENABLE_OPENGL)

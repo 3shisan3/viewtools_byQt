@@ -39,6 +39,7 @@ set(SOURCE_CODE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # 指定包含头文件
 include_directories(
     ${3RD_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/extand
 
     ${SOURCE_CODE_DIR}
     ${SOURCE_CODE_DIR}/core

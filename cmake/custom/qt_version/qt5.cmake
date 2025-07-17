@@ -59,7 +59,16 @@ if (ENABLE_MAP_COMPONENT)
     add_definitions(-DMAP_COMPONENT_ENABLE)
 
     find_package(Qt5Positioning  REQUIRED)
-    list(APPEND QT_DEPEND_LIBS Qt5::Positioning) 
+    list(APPEND QT_DEPEND_LIBS Qt5::Positioning)
+
+    if (USE_WEB_LEAFLET)
+        find_package(Qt5 COMPONENTS Network WebChannel WebView REQUIRED)
+        list(APPEND QT_DEPEND_LIBS
+            Qt5::Network
+            Qt5::WebChannel
+            Qt5::WebView
+        ) 
+    endif (USE_WEB_LEAFLET)
 endif (ENABLE_MAP_COMPONENT)
 
 if (ENABLE_OPENGL)

@@ -27,51 +27,112 @@
     <div id="map"></div>
 
     <script>
-        // 初始化地图和标记
-        var map = L.map('map').setView([0, 0], 13);
-        var marker = L.marker([0, 0]).addTo(map);
-        
-        // 定义图层
-        var onlineLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '©3shisan3'
-        });
-        
-        var offlineLayer = L.tileLayer('file:///path/to/offline/tiles/{z}/{x}/{y}.png', {
-            maxzoom: 18,
-            attribution: '©3shisan3'
-        });
-
-        // 默认添加在线图层
-        onlineLayer.addTo(map);
-
-        // Qt 通信对象
+        // 全局变量
+        var map = null;
+        var marker = null;
+        var onlineLayer = null;
+        var offlineLayer = null;
         var backend = null;
+        var currentOnlineTileUrl = '{{ online_tile_url }}' || 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+        var initialLocation = {
+            lat: {{ initial_location.lat }} || 0,
+            lng: {{ initial_location.lng }} || 0
+        };
         
-        // 初始化 WebChannel
+        // 初始化地图
+        function initMap() {
+            // 使用模板提供的初始位置或默认值
+            map = L.map('map').setView([initialLocation.lat, initialLocation.lng], 13);
+            marker = L.marker([initialLocation.lat, initialLocation.lng]).addTo(map);
+            
+            // 创建在线图层（使用模板提供的URL或默认值）
+            onlineLayer = L.tileLayer(currentOnlineTileUrl, {
+                attribution: '©3shisan3',
+            });
+            
+            // 创建离线图层（使用自定义实现）
+            offlineLayer = L.tileLayer('qwebchannel://tiles/{z}/{x}/{y}.png', {
+                minZoom: 1,
+                maxZoom: 18,
+                attribution: '©3shisan3',
+                // 自定义瓦片创建逻辑
+                createTile: function(pathInfo, done) {
+                    var tile = document.createElement('img');
+                    tile.onload = function() { done(null, tile); };
+                    tile.onerror = function() { 
+                        done(new Error('Tile load failed'), tile); 
+                    };
+                    
+                    // 通过QWebChannel获取瓦片
+                    if (backend) {
+                        backend.getOfflineTile(
+                            pathInfo.x, pathInfo.y, pathInfo.z,
+                            function(tileData) {
+                                if (tileData && tileData.length > 0) {
+                                    // 创建Blob URL
+                                    var blob = new Blob(
+                                        [new Uint8Array(tileData)], 
+                                        {type: 'image/png'}
+                                    );
+                                    tile.src = URL.createObjectURL(blob);
+                                } else {
+                                    // 使用透明占位图
+                                    tile.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+                                }
+                            }
+                        );
+                    } else {
+                        tile.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+                    }
+                    
+                    return tile;
+                }
+            });
+
+            // 检查网络状态并添加相应图层
+            if (navigator.onLine) {
+                onlineLayer.addTo(map);
+            } else {
+                offlineLayer.addTo(map);
+            }
+            
+            // 监听网络状态变化
+            window.addEventListener('online', function() {
+                if (map.hasLayer(offlineLayer)) {
+                    map.removeLayer(offlineLayer);
+                    onlineLayer.addTo(map);
+                }
+            });
+
+            window.addEventListener('offline', function() {
+                if (map.hasLayer(onlineLayer)) {
+                    map.removeLayer(onlineLayer);
+                    offlineLayer.addTo(map);
+                }
+            });
+        }
+        
+        // Qt 通信对象
         window.onload = function() {
             new QWebChannel(qt.webChannelTransport, function(channel) {
                 backend = channel.objects.backend;
                 
-                // 连接信号
-                backend.locationInitialized.connect(function(locationData) {
-                    handleLocationInit(locationData);
-                });
+                // 初始化地图
+                initMap();
                 
+                // 连接信号
                 backend.locationUpdated.connect(function(updateData) {
                     handleLocationUpdate(updateData);
                 });
                 
-                backend.networkStatusChanged.connect(function(isOnline) {
-                    if (isOnline) {
-                        if (map.hasLayer(offlineLayer)) {
-                            map.removeLayer(offlineLayer);
-                            onlineLayer.addTo(map);
-                        }
-                    } else {
-                        if (map.hasLayer(onlineLayer)) {
-                            map.removeLayer(onlineLayer);
-                            offlineLayer.addTo(map);
-                        }
+                backend.tileUrlChanged.connect(function(newUrl) {
+                    currentOnlineTileUrl = newUrl;
+                    onlineLayer.setUrl(newUrl);
+                    
+                    // 如果当前是在线状态，重新加载图层
+                    if (navigator.onLine && map.hasLayer(onlineLayer)) {
+                        map.removeLayer(onlineLayer);
+                        onlineLayer.addTo(map);
                     }
                 });
                 
@@ -80,35 +141,20 @@
             });
         };
         
-        // 处理初始位置数据
-        function handleLocationInit(locationData) {
-            var loc = locationData.location;
-            map.setView([loc.lat, loc.lng], 13);
-            marker.setLatLng([loc.lat, loc.lng]);
-            
-            // 绘制历史位置
-            locationData.history.forEach(function(location) {
-                L.circleMarker([location.lat, location.lng], {
-                    radius: 5,
-                    color: 'red',
-                    fillColor: '#f03',
-                    fillOpacity: 0.5
-                }).addTo(map);
-            });
-        }
-        
         // 处理位置更新
         function handleLocationUpdate(updateData) {
             var loc = updateData.location;
             map.setView([loc.lat, loc.lng]);
             marker.setLatLng([loc.lat, loc.lng]);
             
-            L.circleMarker([updateData.history.lat, updateData.history.lng], {
-                radius: 5,
-                color: 'red',
-                fillColor: '#f03',
-                fillOpacity: 0.5
-            }).addTo(map);
+            if (updateData.history) {
+                L.circleMarker([updateData.history.lat, updateData.history.lng], {
+                    radius: 5,
+                    color: 'red',
+                    fillColor: '#f03',
+                    fillOpacity: 0.5
+                }).addTo(map);
+            }
         }
     </script>
 </body>
