@@ -20,5 +20,6 @@ option(ENABLE_MEDIA_PLAYER "using video streaming playback module" ON)
 # 启用地图组件模块
 option(ENABLE_MAP_COMPONENT "using map component" ON)
 if (ENABLE_MAP_COMPONENT)
-    option(USE_WEB_LEAFLET "using leaflet tos show mapview" ON)
+    option(USE_WEB_LEAFLET "using leaflet to show mapview" OFF)
+    # option(USE_QML_LOCATION "using qtlocation to show mapview" ON)
 endif (ENABLE_MAP_COMPONENT)

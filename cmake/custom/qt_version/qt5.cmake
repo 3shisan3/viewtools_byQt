@@ -58,16 +58,22 @@ endif (ENABLE_MEDIA_PLAYER)
 if (ENABLE_MAP_COMPONENT)
     add_definitions(-DMAP_COMPONENT_ENABLE)
 
+    find_package(Qt5Network  REQUIRED)
     find_package(Qt5Positioning  REQUIRED)
-    list(APPEND QT_DEPEND_LIBS Qt5::Positioning)
+    list(APPEND QT_DEPEND_LIBS
+        Qt5::Network
+        Qt5::Positioning
+    )
 
     if (USE_WEB_LEAFLET)
-        find_package(Qt5 COMPONENTS Network WebChannel WebView REQUIRED)
+        find_package(Qt5 COMPONENTS WebChannel WebEngine WebView REQUIRED)
         list(APPEND QT_DEPEND_LIBS
-            Qt5::Network
             Qt5::WebChannel
+            Qt5::WebEngine
             Qt5::WebView
-        ) 
+        )
+    elseif(USE_QML_LOCATION)
+
     endif (USE_WEB_LEAFLET)
 endif (ENABLE_MAP_COMPONENT)
 

@@ -54,16 +54,29 @@ endif (ENABLE_MEDIA_PLAYER)
 if (ENABLE_MAP_COMPONENT)
     add_definitions(-DMAP_COMPONENT_ENABLE)
 
-    find_package(Qt6 COMPONENTS Positioning REQUIRED)
-    list(APPEND QT_DEPEND_LIBS Qt6::Positioning) 
+    find_package(Qt6 COMPONENTS Network Positioning REQUIRED)
+    list(APPEND QT_DEPEND_LIBS
+        Qt6::Network
+        Qt6::Positioning
+    ) 
 
     if (USE_WEB_LEAFLET)
-        find_package(Qt6 COMPONENTS Network WebChannel WebView REQUIRED)
+        find_package(Qt6 COMPONENTS WebChannel WebEngine WebView REQUIRED)
         list(APPEND QT_DEPEND_LIBS
-            Qt6::Network
             Qt6::WebChannel
+            Qt6::WebEngine
             Qt6::WebView
-        ) 
+        )
+    elseif(USE_QML_LOCATION)
+        add_definitions(-DUSE_QML_LOCATION)
+
+        find_package(Qt6 COMPONENTS Quick QuickWidgets QuickControls2 Location REQUIRED)
+        list(APPEND QT_DEPEND_LIBS
+            Qt6::Location
+            Qt6::Quick
+            Qt6::QuickWidgets
+            Qt6::QuickControls2
+        )
     endif (USE_WEB_LEAFLET)
 endif (ENABLE_MAP_COMPONENT)
 

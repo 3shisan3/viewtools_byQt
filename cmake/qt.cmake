@@ -45,6 +45,8 @@ file(GLOB PROJECT_QRCS
 )
 if (USE_WEB_LEAFLET)
     list(APPEND PROJECT_QRCS ${CMAKE_CURRENT_SOURCE_DIR}/extand/map_by_leaflet/resources.qrc)
+elseif(USE_QML_LOCATION)
+    list(APPEND PROJECT_QRCS ${CMAKE_CURRENT_SOURCE_DIR}/extand/map_by_qml/resources.qrc)
 endif()
 
 # 设置 UI 文件

@@ -48,5 +48,10 @@ if (ENABLE_MAP_COMPONENT)
             ${CMAKE_CURRENT_SOURCE_DIR}/extand/map_by_leaflet/*.cpp
         )
         list(APPEND PROJECT_SRCS ${LEAFLET_MAP_SRCS})
+    elseif(USE_QML_LOCATION)
+        file(GLOB_RECURSE QML_MAP_SRCS
+            ${CMAKE_CURRENT_SOURCE_DIR}/extand/map_by_qml/*.cpp
+        )
+        list(APPEND PROJECT_SRCS ${QML_MAP_SRCS})
     endif()
 endif (ENABLE_MAP_COMPONENT)

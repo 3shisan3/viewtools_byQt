@@ -15,6 +15,9 @@
 #include "view/component/joystick_wheel.h"
 #ifdef MAP_COMPONENT_ENABLE
 #include "view/widget/map/map_component.h"
+#ifdef USE_QML_LOCATION
+#include "map_by_qml/map_widget.h"
+#endif
 #endif
 
 ExampleWindow::ExampleWindow(QWidget *parent)
@@ -135,9 +138,9 @@ void ExampleWindow::extraFeatures()
 
 #ifdef MAP_COMPONENT_ENABLE
     // 增加地图组件显示
-    QPushButton *mapBtn = new QPushButton(tr("open marine  map component"));
-    layout->addWidget(mapBtn);
-    connect(mapBtn, &QPushButton::clicked, this, [this]() {
+    QPushButton *basemapBtn = new QPushButton(tr("open map component"));
+    layout->addWidget(basemapBtn);
+    connect(basemapBtn, &QPushButton::clicked, this, [this]() {
         QDialog *mapDialog = new QDialog;
         mapDialog->setWindowTitle("Marine Map");
         mapDialog->resize(800, 600);
@@ -163,6 +166,40 @@ void ExampleWindow::extraFeatures()
         mapDialog->exec();
         
         // 对话框关闭后自动删除
+        mapDialog->deleteLater();
+    });
+#endif
+
+#if defined(MAP_COMPONENT_ENABLE) && defined(USE_QML_LOCATION)
+    QPushButton *mapBtn = new QPushButton(tr("open map"));
+    layout->addWidget(mapBtn);
+    connect(mapBtn, &QPushButton::clicked, this, [this]() {
+        QDialog *mapDialog = new QDialog(this);
+        mapDialog->setWindowTitle("Map");
+        mapDialog->resize(800, 600);
+        
+        QVBoxLayout *dialogLayout = new QVBoxLayout(mapDialog);
+        MapWidget *mapWidget = new MapWidget(mapDialog);
+        dialogLayout->addWidget(mapWidget);
+
+        // 初始设置
+        // 添加瓦片图层
+        mapWidget->addTileLayer("OpenStreetMap",
+                                "https://{a-c}.tile.openstreetmap.org/{z}/{x}/{y}.png");
+        mapWidget->addTileLayer("Google Maps",
+                                "https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}");
+
+        // 设置活动图层
+        mapWidget->setActiveTileLayer("OpenStreetMap");
+
+        // 设置视图
+        mapWidget->setView(QGeoCoordinate(39.9042, 116.4074), 12); // 北京，缩放级别12
+
+        // 添加标记
+        mapWidget->addMarker(QGeoCoordinate(39.9042, 116.4074), "Beijing", "capital");
+
+        mapDialog->setModal(true);
+        mapDialog->exec();
         mapDialog->deleteLater();
     });
 #endif
