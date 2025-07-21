@@ -10,10 +10,10 @@
 #include "view/widget/map/mapengine/memory_cache.h"
 #include "view/widget/map/render/map_renderer.h"
 
-class MarineMapComponent : public QWidget {
+class SsMapComponent : public QWidget {
     Q_OBJECT
 public:
-    explicit MarineMapComponent(QWidget* parent = nullptr);
+    explicit SsMapComponent(QWidget* parent = nullptr);
     
     // 地图控制
     void setCenter(const QGeoCoordinate& center);

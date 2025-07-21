@@ -4,7 +4,7 @@
 #include <QWheelEvent>
 #include <QStandardPaths>
 
-MarineMapComponent::MarineMapComponent(QWidget *parent) : QWidget(parent)
+SsMapComponent::SsMapComponent(QWidget *parent) : QWidget(parent)
 {
     // 初始化缓存系统
     QString cachePath = QCoreApplication::applicationDirPath() + "/cache/marine_tiles";
@@ -14,13 +14,13 @@ MarineMapComponent::MarineMapComponent(QWidget *parent) : QWidget(parent)
     // 初始化瓦片加载器 (使用高德海洋地图)
     m_tileLoader = new SsOnlineTileLoader(this);
     // https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
-    // m_tileLoader->setUrlTemplate("https://webst02.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}");
+    m_tileLoader->setUrlTemplate("https://webst02.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}");
     // m_tileLoader->setUrlTemplate("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png");
-    m_tileLoader->setUrlTemplate(
-        "https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/{z}/{x}/{y}?access_token="
-        "pk.eyJ1IjoiM3NoaXNhbjMiLCJhIjoiY20wMHRhbnQzMHFmejJtb29ibzk5dzNjaCJ9.CXBCh481VYmC6PPT7jJGSA"
-    );
-    connect(m_tileLoader, &SsOnlineTileLoader::tileReceived, this, &MarineMapComponent::handleTileReceived);
+    // m_tileLoader->setUrlTemplate(
+    //     "https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/{z}/{x}/{y}?access_token="
+    //     "pk.eyJ1IjoiM3NoaXNhbjMiLCJhIjoiY20wMHRhbnQzMHFmejJtb29ibzk5dzNjaCJ9.CXBCh481VYmC6PPT7jJGSA"
+    // );
+    connect(m_tileLoader, &SsOnlineTileLoader::tileReceived, this, &SsMapComponent::handleTileReceived);
 
     // 初始化渲染器
     m_renderer = new MapRenderer(this);
@@ -34,7 +34,7 @@ MarineMapComponent::MarineMapComponent(QWidget *parent) : QWidget(parent)
     setZoom(12);
 }
 
-void MarineMapComponent::paintEvent(QPaintEvent *)
+void SsMapComponent::paintEvent(QPaintEvent *)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
@@ -72,20 +72,20 @@ void MarineMapComponent::paintEvent(QPaintEvent *)
     m_shipLayer->render(&painter, size(), m_renderer->center(), m_renderer->zoomLevel());
 }
 
-void MarineMapComponent::handleTileReceived(int x, int y, int z, const QPixmap &tile)
+void SsMapComponent::handleTileReceived(int x, int y, int z, const QPixmap &tile)
 {
     m_memoryCache->insert(x, y, z, tile);
     m_diskCache->saveTile(x, y, z, tile);
     update();
 }
 
-void MarineMapComponent::resizeEvent(QResizeEvent *event)
+void SsMapComponent::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
     update();
 }
 
-void MarineMapComponent::wheelEvent(QWheelEvent *event)
+void SsMapComponent::wheelEvent(QWheelEvent *event)
 {
     QPoint numDegrees = event->angleDelta() / 8;
     if (!numDegrees.isNull())
@@ -96,7 +96,7 @@ void MarineMapComponent::wheelEvent(QWheelEvent *event)
     event->accept();
 }
 
-void MarineMapComponent::mousePressEvent(QMouseEvent *event)
+void SsMapComponent::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton)
     {
@@ -107,7 +107,7 @@ void MarineMapComponent::mousePressEvent(QMouseEvent *event)
     QWidget::mousePressEvent(event);
 }
 
-void MarineMapComponent::mouseMoveEvent(QMouseEvent *event)
+void SsMapComponent::mouseMoveEvent(QMouseEvent *event)
 {
     if (m_isDragging)
     {
@@ -121,7 +121,7 @@ void MarineMapComponent::mouseMoveEvent(QMouseEvent *event)
     QWidget::mouseMoveEvent(event);
 }
 
-void MarineMapComponent::mouseReleaseEvent(QMouseEvent *event)
+void SsMapComponent::mouseReleaseEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton)
     {
@@ -131,13 +131,13 @@ void MarineMapComponent::mouseReleaseEvent(QMouseEvent *event)
     QWidget::mouseReleaseEvent(event);
 }
 
-void MarineMapComponent::setCenter(const QGeoCoordinate &center)
+void SsMapComponent::setCenter(const QGeoCoordinate &center)
 {
     m_renderer->setCenter(center);
     update();
 }
 
-void MarineMapComponent::setZoom(double zoom)
+void SsMapComponent::setZoom(double zoom)
 {
     // 限制缩放级别在合理范围内
     zoom = qBound(3.0, zoom, 18.0);
@@ -145,7 +145,7 @@ void MarineMapComponent::setZoom(double zoom)
     update();
 }
 
-void MarineMapComponent::setMapStyle(const QString &styleUrl)
+void SsMapComponent::setMapStyle(const QString &styleUrl)
 {
     m_tileLoader->setUrlTemplate(styleUrl);
     // 清除缓存以加载新样式
@@ -154,19 +154,19 @@ void MarineMapComponent::setMapStyle(const QString &styleUrl)
     update();
 }
 
-void MarineMapComponent::updateShipData(const QGeoCoordinate &position, double heading)
+void SsMapComponent::updateShipData(const QGeoCoordinate &position, double heading)
 {
     m_shipLayer->setShipPosition(position, heading);
     update();
 }
 
-void MarineMapComponent::setRoute(const QVector<QGeoCoordinate> &route)
+void SsMapComponent::setRoute(const QVector<QGeoCoordinate> &route)
 {
     m_routeLayer->setRoute(route);
     update();
 }
 
-void MarineMapComponent::clearRoute()
+void SsMapComponent::clearRoute()
 {
     m_routeLayer->clearRoute();
     update();

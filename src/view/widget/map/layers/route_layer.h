@@ -1,12 +1,12 @@
 #ifndef ROUTE_LAYER_H
 #define ROUTE_LAYER_H
 
-#include <QObject>
-#include <QPainter>
+#include "base_layer.h"
+
 #include <QGeoCoordinate>
 #include <QVector>
 
-class RouteLayer : public QObject
+class RouteLayer : public BaseLayer
 {
     Q_OBJECT
 public:
@@ -16,8 +16,9 @@ public:
     void setRoute(const QVector<QGeoCoordinate> &route);
     void clearRoute();
 
-    // 渲染航线
-    void render(QPainter *painter, const QSize &size, const QGeoCoordinate &center, double zoomLevel);
+    // 实现基类纯虚函数
+    void render(QPainter* painter, const QSize& viewport,
+                const QGeoCoordinate& center, double zoom) override;
 
 private:
     // 航线数据

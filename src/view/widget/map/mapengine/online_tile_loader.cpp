@@ -8,8 +8,8 @@
 
 SsOnlineTileLoader::SsOnlineTileLoader(QObject *parent)
     : QObject(parent)
+    , m_networkManager(new QNetworkAccessManager(this))
 {
-    m_networkManager = new QNetworkAccessManager(this);
     connect(m_networkManager, &QNetworkAccessManager::finished,
             this, &SsOnlineTileLoader::handleNetworkReply);
 }

@@ -148,7 +148,7 @@ void ExampleWindow::extraFeatures()
         QVBoxLayout *layout = new QVBoxLayout(mapDialog);
         
         // 创建地图组件
-        MarineMapComponent *mapComponent = new MarineMapComponent(mapDialog);
+        SsMapComponent *mapComponent = new SsMapComponent(mapDialog);
         layout->addWidget(mapComponent);
         
         // 设置船舶位置 (示例坐标)

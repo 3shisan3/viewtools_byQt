@@ -1,7 +1,5 @@
 #include "ship_layer.h"
-
 #include <QPainter>
-
 #include "view/widget/map/render/map_renderer.h"
 
 ShipLayer::ShipLayer(QObject *parent) : BaseLayer(parent) {}
@@ -15,13 +13,13 @@ void ShipLayer::updatePosition(const QGeoCoordinate &position, double heading)
 {
     m_position = position;
     m_heading = heading;
-    emit renderingComplete();
+    emit updateRequested();
 }
 
 void ShipLayer::render(QPainter *painter, const QSize &viewport,
                        const QGeoCoordinate &center, double zoom)
 {
-    if (!m_position.isValid())
+    if (!m_position.isValid() || !isVisible())
         return;
 
     QPointF shipPos = MapRenderer::geoToPixel(m_position, center, zoom, viewport);
@@ -37,4 +35,6 @@ void ShipLayer::render(QPainter *painter, const QSize &viewport,
     painter->setPen(QPen(Qt::black, 1));
     painter->drawPolygon(ship);
     painter->restore();
+
+    emit renderingComplete();
 }
