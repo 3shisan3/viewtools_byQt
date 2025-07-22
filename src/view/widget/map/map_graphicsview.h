@@ -15,6 +15,7 @@ Version history
 #ifndef SSMAP_GRAPHICSVIEW_H
 #define SSMAP_GRAPHICSVIEW_H
 
+#include <QGeoCoordinate>
 #include <QGraphicsScene>
 #include <QGraphicsView>
 #include <QSet>
@@ -31,6 +32,9 @@ class SsMapGraphicsView : public QGraphicsView
 public:
     explicit SsMapGraphicsView(QWidget* parent = nullptr);
     ~SsMapGraphicsView() override;
+
+    // 配置项操作
+    void setZoomBehavior(bool zoomAtMousePosition);
 
     // 图层管理
     void addLayer(BaseLayer* layer);
@@ -58,6 +62,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    void showEvent(QShowEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
 
 private slots:
@@ -79,6 +84,9 @@ private:
     
     // 图层渲染
     void renderLayers(QPainter* painter);
+
+    // 一些配置项
+    bool m_zoomAtMousePos;  // 地图缩放基于地图中心还是鼠标所在位置
 
     // 成员变量
     QGraphicsScene* m_scene;

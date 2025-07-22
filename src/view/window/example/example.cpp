@@ -14,7 +14,7 @@
 #endif
 #include "view/component/joystick_wheel.h"
 #ifdef MAP_COMPONENT_ENABLE
-#include "view/widget/map/map_component.h"
+#include "view/widget/map/map_graphicsview.h"
 #ifdef USE_QML_LOCATION
 #include "map_by_qml/map_widget.h"
 #endif
@@ -148,18 +148,22 @@ void ExampleWindow::extraFeatures()
         QVBoxLayout *layout = new QVBoxLayout(mapDialog);
         
         // 创建地图组件
-        SsMapComponent *mapComponent = new SsMapComponent(mapDialog);
+        SsMapGraphicsView *mapComponent = new SsMapGraphicsView(mapDialog);
         layout->addWidget(mapComponent);
+
+        // mapComponent->setTileUrlTemplate("https://webst02.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}");
+        mapComponent->setTileUrlTemplate("https://wprd01.is.autonavi.com/appmaptile?&style=6&lang=zh_cn&scl=1&ltype=0&x={x}&y={y}&z={z}");
+
+        mapComponent->setCenter(QGeoCoordinate(31.2304, 121.4737)); // 上海
+        mapComponent->setZoomLevel(14);
         
         // 设置船舶位置 (示例坐标)
-        mapComponent->updateShipData(QGeoCoordinate(21.48341372, 109.05621073), 23.5);
         
         // 设置航线
         QVector<QGeoCoordinate> route;
-        route << QGeoCoordinate(21.48341372, 109.05621073)
-            << QGeoCoordinate(21.49341372, 109.07621073)
-            << QGeoCoordinate(21.50341372, 109.08621073);
-        mapComponent->setRoute(route);
+        route << QGeoCoordinate(31.2304, 121.4737) 
+            << QGeoCoordinate(31.2350, 121.4800)
+            << QGeoCoordinate(31.2400, 121.4850);
         
         // 设置为模态对话框
         mapDialog->setModal(true);

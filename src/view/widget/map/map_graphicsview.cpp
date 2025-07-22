@@ -18,13 +18,17 @@ SsMapGraphicsView::SsMapGraphicsView(QWidget *parent)
       m_diskCache(QCoreApplication::applicationDirPath() + "/map_tiles")
 {
     // 基础设置
-    setScene(m_scene);
+    setScene(m_scene);  // QGraphicsView 默认 paintevent 绘制 QGraphicsScene 的内容
+    // 绘制参数
     setRenderHint(QPainter::Antialiasing, true);
     setRenderHint(QPainter::SmoothPixmapTransform, true);
-    setDragMode(QGraphicsView::ScrollHandDrag);
+    setDragMode(QGraphicsView::ScrollHandDrag); // 启用拖拽
+    // 隐藏滚动条
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
+    // 默认配置
+    setZoomBehavior(true); // 开启鼠标追踪(如果想要放大缩小鼠标所在位置（以视图中心放大缩小可注释）类似功能需要启用)
     // 默认算法
     setTileAlgorithm(TileForCoord::TileAlgorithmFactory::AlgorithmType::Standard);
 
@@ -37,6 +41,15 @@ SsMapGraphicsView::~SsMapGraphicsView()
 {
     clearLayers();
 }
+
+/**
+ * @brief 设置地图缩放基于地图中心还是鼠标所在位置
+ */
+void SsMapGraphicsView::setZoomBehavior(bool zoomAtMousePosition)
+{
+    m_zoomAtMousePos = zoomAtMousePosition;
+    setMouseTracking(zoomAtMousePosition);
+};
 
 /**
  * @brief 添加图层到地图
@@ -82,8 +95,13 @@ void SsMapGraphicsView::clearLayers()
  */
 void SsMapGraphicsView::setCenter(const QGeoCoordinate &center)
 {
-    m_center = center;
-    updateViewport();
+    if (m_center != center)
+    {
+        m_center = center;
+
+        // 更新视图
+        updateViewport();
+    }
 }
 
 /**
@@ -91,8 +109,11 @@ void SsMapGraphicsView::setCenter(const QGeoCoordinate &center)
  */
 void SsMapGraphicsView::setZoomLevel(double zoom)
 {
-    m_zoomLevel = qBound(1.0, zoom, 22.0);
-    updateViewport();
+    if (m_zoomLevel != zoom)
+    {
+        m_zoomLevel = qBound(1.0, zoom, 22.0);
+        updateViewport();
+    }
 }
 
 /**
@@ -135,24 +156,46 @@ void SsMapGraphicsView::setTileUrlTemplate(const QString &urlTemplate, const QSt
  */
 void SsMapGraphicsView::wheelEvent(QWheelEvent *event)
 {
-    // 计算缩放中心点
-    QPointF scenePos = mapToScene(event->position().toPoint());
-    QGeoCoordinate geoPos = pixelToGeo(scenePos);
-
-    // 计算缩放级别
+    // 计算缩放级别变化
     double zoomDelta = event->angleDelta().y() > 0 ? 1 : -1;
-    double newZoom = qBound(1.0, m_zoomLevel + zoomDelta * 0.5, 22.0);
+    double newZoom = qBound(1.0, m_zoomLevel + zoomDelta, 22.0);
 
     if (qFuzzyCompare(newZoom, m_zoomLevel))
     {
+        event->accept();
         return;
     }
 
-    // 保持鼠标位置的地图位置不变
+    // 计算缩放比例因子
+    double scaleFactor = qPow(2.0, newZoom - m_zoomLevel);
+    // 更新缩放级别
     m_zoomLevel = newZoom;
-    m_center = geoPos;
 
-    updateViewport();
+    // ================= 基于鼠标位置缩放 =================
+    if (m_zoomAtMousePos)
+    {
+        // 保存鼠标位置（视图坐标和场景坐标）
+        QPoint mousePos = event->position().toPoint();
+        QPointF mouseScenePos = mapToScene(mousePos);
+        
+        // 更新视图范围
+        int w = int(qPow(2, m_zoomLevel) * 256);
+        m_scene->setSceneRect(0, 0, w, w);
+
+        // 计算鼠标点在缩放前后的位置变化
+        QPointF newMouseScenePos = mouseScenePos * scaleFactor;
+        
+        // 通过滚动条调整视图位置（保持鼠标点视觉位置不变）
+        horizontalScrollBar()->setValue(qRound(newMouseScenePos.x() - mousePos.x()));
+        verticalScrollBar()->setValue(qRound(newMouseScenePos.y() - mousePos.y()));
+
+        // 同步 m_center 到当前视图中心
+        QPointF viewCenter = mapToScene(viewport()->rect().center());
+        m_center = pixelToGeo(viewCenter);  // todo存在公式导致的误差，待解决
+    }
+
+    // 统一请求瓦片
+    requestVisibleTiles();
     event->accept();
 }
 
@@ -183,9 +226,10 @@ void SsMapGraphicsView::mouseMoveEvent(QMouseEvent *event)
         // 转换为地理坐标偏移
         QPointF centerPixel = geoToPixel(m_center);
         centerPixel -= delta;
-        m_center = pixelToGeo(centerPixel);
+        QGeoCoordinate newCenter = pixelToGeo(centerPixel);
 
-        updateViewport();
+        // 使用 setCenter 来更新中心点，复用相同的逻辑
+        setCenter(newCenter);
     }
     QGraphicsView::mouseMoveEvent(event);
 }
@@ -213,6 +257,24 @@ void SsMapGraphicsView::resizeEvent(QResizeEvent *event)
 }
 
 /**
+ * @brief       窗口显示时设置显示瓦片的视图位置
+ * @param event
+ */
+void SsMapGraphicsView::showEvent(QShowEvent* event)
+{
+    QGraphicsView::showEvent(event);
+    
+    int w = int(qPow(2, m_zoomLevel) * 256);
+    m_scene->setSceneRect(0, 0, w, w);
+    
+    // 初始化视图位置
+    QPoint pixel = m_tileAlgorithm.latLongToPixelXY(
+        m_center.longitude(), m_center.latitude(), qFloor(m_zoomLevel));
+    QPointF scenePos(pixel.x() - width()/2, pixel.y() - height()/2);
+    centerOn(scenePos);
+}
+
+/**
  * @brief 绘制事件处理，先绘制瓦片底图，再绘制各图层
  */
 void SsMapGraphicsView::paintEvent(QPaintEvent *event)
@@ -231,17 +293,17 @@ void SsMapGraphicsView::paintEvent(QPaintEvent *event)
  */
 void SsMapGraphicsView::updateViewport()
 {
-    // 更新场景矩形
-    QPointF centerPixel = geoToPixel(m_center);
-    QRectF viewRect(centerPixel - QPointF(width() / 2, height() / 2),
-                    QSizeF(width(), height()));
-    m_scene->setSceneRect(viewRect);
+    // 确保场景大小正确
+    int w = int(qPow(2, m_zoomLevel) * 256);
+    m_scene->setSceneRect(0, 0, w, w);
+
+    // 重新计算并设置中心点
+    QPoint pixel = m_tileAlgorithm.latLongToPixelXY(
+        m_center.longitude(), m_center.latitude(), qFloor(m_zoomLevel));
+    centerOn(QPointF(pixel.x() - width()/2, pixel.y() - height()/2));
 
     // 请求可见区域的瓦片
     requestVisibleTiles();
-
-    // 更新视图
-    update();
 }
 
 /**
@@ -250,23 +312,27 @@ void SsMapGraphicsView::updateViewport()
 void SsMapGraphicsView::requestVisibleTiles()
 {
     // 获取当前视图的瓦片范围
-    QRectF viewRect = m_scene->sceneRect();
-    QPoint topLeftTile = m_tileAlgorithm.latLongToTileXY(
-        pixelToGeo(viewRect.topLeft()).longitude(),
-        pixelToGeo(viewRect.topLeft()).latitude(),
-        qFloor(m_zoomLevel));
+    QRectF viewRect = mapToScene(viewport()->rect()).boundingRect();
 
-    QPoint bottomRightTile = m_tileAlgorithm.latLongToTileXY(
-        pixelToGeo(viewRect.bottomRight()).longitude(),
-        pixelToGeo(viewRect.bottomRight()).latitude(),
-        qFloor(m_zoomLevel));
+    // 直接使用像素坐标计算瓦片范围（更高效）
+    QPoint tlTile = QPoint(qFloor(viewRect.left() / 256.0),
+                           qFloor(viewRect.top() / 256.0));
+    QPoint brTile = QPoint(qFloor(viewRect.right() / 256.0),
+                           qFloor(viewRect.bottom() / 256.0));
 
-    // 请求可见的瓦片
-    for (int x = topLeftTile.x(); x <= bottomRightTile.x(); ++x)
+    // 添加边界检查
+    int maxTile = qPow(2, m_zoomLevel);
+    tlTile.setX(qMax(0, tlTile.x()));
+    tlTile.setY(qMax(0, tlTile.y()));
+    brTile.setX(qMin(maxTile - 1, brTile.x()));
+    brTile.setY(qMin(maxTile - 1, brTile.y()));
+
+    // 请求瓦片
+    for (int x = tlTile.x(); x <= brTile.x(); ++x)
     {
-        for (int y = topLeftTile.y(); y <= bottomRightTile.y(); ++y)
+        for (int y = tlTile.y(); y <= brTile.y(); ++y)
         {
-            loadTile(x, y, qFloor(m_zoomLevel));
+            loadTile(x, y, m_zoomLevel);
         }
     }
 }
@@ -279,12 +345,7 @@ QPointF SsMapGraphicsView::geoToPixel(const QGeoCoordinate &coord) const
     QPoint pixel = m_tileAlgorithm.latLongToPixelXY(
         coord.longitude(), coord.latitude(), qFloor(m_zoomLevel));
 
-    // 转换为场景坐标
-    QPointF sceneCenter = m_scene->sceneRect().center();
-    QPointF viewCenter(width() / 2, height() / 2);
-
-    return QPointF(sceneCenter.x() + (pixel.x() - viewCenter.x()),
-                   sceneCenter.y() + (pixel.y() - viewCenter.y()));
+    return QPointF(pixel.x(), pixel.y());
 }
 
 /**
@@ -292,14 +353,13 @@ QPointF SsMapGraphicsView::geoToPixel(const QGeoCoordinate &coord) const
  */
 QGeoCoordinate SsMapGraphicsView::pixelToGeo(const QPointF &pixel) const
 {
-    // 转换为像素坐标
-    QPointF sceneCenter = m_scene->sceneRect().center();
-    QPointF viewCenter(width() / 2, height() / 2);
-    QPoint pixelPos(pixel.x() - sceneCenter.x() + viewCenter.x(),
-                    pixel.y() - sceneCenter.y() + viewCenter.y());
-
     qreal lon, lat;
-    m_tileAlgorithm.pixelXYToLatLong(pixelPos, qFloor(m_zoomLevel), lon, lat);
+    // 直接调用算法，无需额外偏移计算
+    m_tileAlgorithm.pixelXYToLatLong(
+        QPoint(static_cast<int>(pixel.x()), static_cast<int>(pixel.y())),
+        qFloor(m_zoomLevel),
+        lon, lat
+    );
     return QGeoCoordinate(lat, lon);
 }
 
