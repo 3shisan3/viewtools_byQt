@@ -1,9 +1,11 @@
-#ifndef BASE_LAYER_H
-#define BASE_LAYER_H
+#ifndef SSMAP_BASE_LAYER_H
+#define SSMAP_BASE_LAYER_H
 
 #include <QObject>
 #include <QPainter>
 #include <QGeoCoordinate>
+
+#include "view/widget/map/coordinate/tile_coordinate_factory.h"
 
 class BaseLayer : public QObject
 {
@@ -22,8 +24,11 @@ public:
      * @param center 地图中心坐标
      * @param zoom 当前缩放级别
      */
-    virtual void render(QPainter* painter, const QSize& viewport,
-                      const QGeoCoordinate& center, double zoom) = 0;
+    virtual void render(QPainter* painter, 
+                       const QSize& viewport,
+                       const QGeoCoordinate& center, 
+                       double zoom,
+                       const TileForCoord::TileAlgorithm& algorithm) = 0;
 
     /**
      * @brief 图层是否可见
@@ -60,4 +65,4 @@ protected:
     bool m_visible = true;  // 图层可见性标志
 };
 
-#endif // BASE_LAYER_H
+#endif // SSMAP_BASE_LAYER_H

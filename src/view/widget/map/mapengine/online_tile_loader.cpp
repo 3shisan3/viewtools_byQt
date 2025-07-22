@@ -1,15 +1,18 @@
 #include "online_tile_loader.h"
+
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QPointer>
 #include <QUrl>
 #include <random>
+
+#include "view/widget/map/coordinate/tile_coordinate.h"
 
 SsOnlineTileLoader::SsOnlineTileLoader(QObject *parent)
     : QObject(parent)
     , m_networkManager(new QNetworkAccessManager(this))
 {
-    connect(m_networkManager, &QNetworkAccessManager::finished,
-            this, &SsOnlineTileLoader::handleNetworkReply);
+    connect(m_networkManager, &QNetworkAccessManager::finished, this, &SsOnlineTileLoader::handleNetworkReply);
 }
 
 SsOnlineTileLoader::~SsOnlineTileLoader()
@@ -58,10 +61,12 @@ void SsOnlineTileLoader::startRequest(int x, int y, int z)
     if (!reply)
         return;
 
+    // 使用QPointer自动检测对象是否存活
+    QPointer<QNetworkReply> safeReply(reply);
     // 设置超时
-    QTimer::singleShot(m_timeout, [this, reply]() {
-        if (reply && reply->isRunning())
-            reply->abort();
+    QTimer::singleShot(m_timeout, [this, safeReply]() {
+        if (safeReply && safeReply->isRunning())
+            safeReply->abort();
     });
 }
 
@@ -76,9 +81,19 @@ QNetworkReply *SsOnlineTileLoader::createRequest(int x, int y, int z)
     DownTileInfo &info = m_pendingRequests[key];
 
     QString url = m_urlTemplate;
-    url.replace("{x}", QString::number(x));
-    url.replace("{y}", QString::number(y));
-    url.replace("{z}", QString::number(z));
+    if (m_urlTemplate.contains("{x}"))   // XYZ格式
+    {
+        url.replace("{x}", QString::number(x));
+        url.replace("{y}", QString::number(y));
+        url.replace("{z}", QString::number(z));
+    }
+    else if (m_urlTemplate.contains("{q}"))   // Bing的quadKey格式
+    {
+        QPoint tile(x, y);
+        QString quadKey = TileForCoord::Bing::tileXYToQuadKey(tile, z);
+        url.replace("{q}", quadKey);
+    }
+    
 
     // 随机选择子域名
     if (url.contains("{s}"))

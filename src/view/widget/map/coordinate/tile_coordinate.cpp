@@ -2,7 +2,6 @@
 
 namespace TileForCoord
 {
-
 /**
  * @brief 计算两点间的大圆距离（Haversine公式）
  * @param lon1 点1经度
@@ -28,8 +27,52 @@ qreal toDistance(qreal lon1, qreal lat1, qreal lon2, qreal lat2)
     return EARTH_AVERAGE_RADIUS * c;
 }
 
+uint mapSize(int level)
+{
+    return static_cast<uint>(256 * qPow(2.0, level));
+}
+
+qreal groundResolution(qreal lat, int level)
+{
+    return cos(lat * M_PI / 180.0) * 2 * M_PI * EARTH_EQUATOR_RADIUS / mapSize(level);
+}
+
+qreal mapScale(qreal lat, int level, int screenDpi)
+{
+    return groundResolution(lat, level) * screenDpi / 0.0254;
+}
+
 namespace Standard
 {
+QPoint latLongToPixelXY(qreal lon, qreal lat, int level)
+{
+    lon = TileForCoord::clipLon(lon);
+    lat = TileForCoord::clipLat(lat);
+
+    qreal x = (lon + 180) / 360;
+    qreal sinLat = qSin(lat * M_PI / 180);
+    qreal y = 0.5 - qLn((1 + sinLat) / (1 - sinLat)) / (4 * M_PI);
+
+    uint size = TileForCoord::mapSize(level);
+    qreal pixelX = x * size + 0.5;
+    pixelX = TileForCoord::clip(pixelX, 0, size - 1);
+    qreal pixelY = y * size + 0.5;
+    pixelY = TileForCoord::clip(pixelY, 0, size - 1);
+
+    return QPoint(pixelX, pixelY);
+}
+
+void pixelXYToLatLong(QPoint pos, int level, qreal &lon, qreal &lat)
+{
+    qreal mapSize = TileForCoord::mapSize(level);
+
+    qreal x = (TileForCoord::clip(pos.x(), 0, mapSize - 1) / mapSize) - 0.5;
+    lon = x * 360;
+
+    qreal y = 0.5 - (pos.y() / mapSize);
+    lat = 90.0 - 360.0 * atan(exp(-y * 2 * M_PI)) / M_PI;
+}
+
 /**
  * @brief 经纬度转瓦片坐标
  * @param lon 经度
@@ -45,19 +88,8 @@ namespace Standard
  */
 QPoint latLongToTileXY(qreal lon, qreal lat, int level)
 {
-    // 输入标准化
-    lon = clipLon(lon);
-    lat = clipLat(lat);
-    
-    // 经度→[0,1]范围
-    qreal x = (lon + 180.0) / 360.0;
-    // 纬度→墨卡托投影y值
-    qreal sinLat = qSin(qDegreesToRadians(lat));
-    qreal y = 0.5 - qLn((1 + sinLat) / (1 - sinLat)) / (4 * M_PI);
-    
-    // 计算瓦片坐标（2^level = 1 << level）
-    qreal mapSize = qPow(2.0, level);
-    return QPoint(static_cast<int>(x * mapSize), static_cast<int>(y * mapSize));
+    QPoint pixel = latLongToPixelXY(lon, lat, level);
+    return QPoint(pixel.x() / 256, pixel.y() / 256);
 }
 
 /**
@@ -68,28 +100,9 @@ QPoint latLongToTileXY(qreal lon, qreal lat, int level)
  */
 QPointF tileXYToLatLong(QPoint tile, int level)
 {
-    qreal mapSize = qPow(2.0, level);
-    // 归一化到[0,1]范围
-    qreal x = tile.x() / mapSize;
-    qreal y = tile.y() / mapSize;
-    
-    // 反算经度
-    qreal lon = x * 360.0 - 180.0;
-    // 反算纬度（反双曲正切计算）
-    qreal lat = 90.0 - qRadiansToDegrees(qAtan(qExp((0.5 - y) * 4 * M_PI)) * 2);
-    
+    qreal lon, lat;
+    pixelXYToLatLong(QPoint(tile.x() * 256, tile.y() * 256), level, lon, lat);
     return QPointF(lon, lat);
-}
-
-qreal groundResolution(qreal lat, int level)
-{
-    lat = clipLat(lat);
-    return qCos(qDegreesToRadians(lat)) * 2 * M_PI * EARTH_EQUATOR_RADIUS / qPow(2.0, level + 8);
-}
-
-qreal mapScale(qreal lat, int level, int screenDpi)
-{
-    return groundResolution(lat, level) * screenDpi / 0.0254;
 }
 
 qreal toLat(qreal lon, qreal lat, int dis)
@@ -112,59 +125,6 @@ qreal toLon(qreal lon, qreal lat, int dis)
 
 namespace Bing
 {
-
-uint mapSize(int level)
-{
-    return static_cast<uint>(256 * qPow(2.0, level));
-}
-
-QPoint latLongToPixelXY(qreal lon, qreal lat, int level)
-{
-    lon = clipLon(lon);
-    lat = clipLat(lat);
-    
-    qreal x = (lon + 180.0) / 360.0;
-    qreal sinLat = qSin(qDegreesToRadians(lat));
-    qreal y = 0.5 - qLn((1 + sinLat) / (1 - sinLat)) / (4 * M_PI);
-    
-    uint size = mapSize(level);
-    return QPoint(static_cast<int>(x * size), static_cast<int>(y * size));
-}
-
-void pixelXYToLatLong(QPoint pos, int level, qreal &lon, qreal &lat)
-{
-    uint size = mapSize(level);
-    qreal x = pos.x() / static_cast<qreal>(size);
-    qreal y = pos.y() / static_cast<qreal>(size);
-    
-    lon = x * 360.0 - 180.0;
-    lat = 90.0 - qRadiansToDegrees(qAtan(qExp((0.5 - y) * 4 * M_PI)) * 2);
-}
-
-QPoint latLongToTileXY(qreal lon, qreal lat, int level)
-{
-    QPoint pixel = latLongToPixelXY(lon, lat, level);
-    return QPoint(pixel.x() / 256, pixel.y() / 256);
-}
-
-QPointF tileXYToLatLong(QPoint tile, int level)
-{
-    qreal lon, lat;
-    pixelXYToLatLong(QPoint(tile.x() * 256, tile.y() * 256), level, lon, lat);
-    return QPointF(lon, lat);
-}
-
-qreal groundResolution(qreal lat, int level)
-{
-    lat = clipLat(lat);
-    return qCos(qDegreesToRadians(lat)) * 2 * M_PI * EARTH_EQUATOR_RADIUS / mapSize(level);
-}
-
-qreal mapScale(qreal lat, int level, int screenDpi)
-{
-    return groundResolution(lat, level) * screenDpi / 0.0254;
-}
-
 /**
  * @brief 生成QuadKey字符串
  * @param tile 瓦片坐标

@@ -36,7 +36,6 @@ constexpr qreal MaxLongitude = 180.0;          // 经度最大值
 /**
  * @brief 通用实用函数
  */
-
 // 数值裁剪到指定范围
 inline qreal clip(qreal n, qreal min, qreal max)
 {
@@ -59,41 +58,50 @@ inline qreal clipLat(qreal lat)
 qreal toDistance(qreal lon1, qreal lat1, qreal lon2, qreal lat2);
 
 /**
+ * @brief 计算指定级别的地图尺寸(像素)
+ * @param level 缩放级别
+ * @return 地图尺寸(像素)
+ */
+uint mapSize(int level);
+
+/**
+ * @brief 计算地面分辨率(米/像素)
+ * @param lat 纬度
+ * @param level 缩放级别
+ * @return 地面分辨率
+ */
+qreal groundResolution(qreal lat, int level);
+
+/**
+ * @brief 计算地图比例尺
+ * @param lat 纬度
+ * @param level 缩放级别
+ * @param screenDpi 屏幕DPI
+ * @return 比例尺(1:xxx)
+ */
+qreal mapScale(qreal lat, int level, int screenDpi);
+
+/**
  * @brief 标准瓦片算法实现
  */
 namespace Standard
 {
-// 经纬度转瓦片坐标
-QPoint latLongToTileXY(qreal lon, qreal lat, int level);
-
-// 瓦片坐标转经纬度
-QPointF tileXYToLatLong(QPoint tile, int level);
-
-// 计算地面分辨率（米/像素）
-qreal groundResolution(qreal lat, int level);
-
-// 计算地图比例尺
-qreal mapScale(qreal lat, int level, int screenDpi);
-
-// 特色功能：移动指定距离后的新纬度
-qreal toLat(qreal lon, qreal lat, int dis);
-
-// 特色功能：移动指定距离后的新经度
-qreal toLon(qreal lon, qreal lat, int dis);
-} // namespace Standard
-
 /**
- * @brief Bing地图瓦片算法实现
+ * @brief 经纬度转像素坐标
+ * @param lon 经度
+ * @param lat 纬度
+ * @param level 缩放级别
+ * @return 像素坐标
  */
-namespace Bing
-{
-// 计算瓦片地图大小（像素）
-uint mapSize(int level);
-
-// 经纬度转像素坐标
 QPoint latLongToPixelXY(qreal lon, qreal lat, int level);
 
-// 像素坐标转经纬度
+/**
+ * @brief 像素坐标转经纬度
+ * @param pos 像素坐标
+ * @param level 缩放级别
+ * @param lon [out] 经度
+ * @param lat [out] 纬度
+ */
 void pixelXYToLatLong(QPoint pos, int level, qreal &lon, qreal &lat);
 
 // 经纬度转瓦片坐标
@@ -102,12 +110,19 @@ QPoint latLongToTileXY(qreal lon, qreal lat, int level);
 // 瓦片坐标转经纬度
 QPointF tileXYToLatLong(QPoint tile, int level);
 
-// 计算地面分辨率
-qreal groundResolution(qreal lat, int level);
+// 移动指定距离后的新纬度
+qreal toLat(qreal lon, qreal lat, int dis);
 
-// 计算地图比例尺
-qreal mapScale(qreal lat, int level, int screenDpi);
+// 移动指定距离后的新经度
+qreal toLon(qreal lon, qreal lat, int dis);
 
+} // namespace Standard
+
+/**
+ * @brief Bing地图瓦片算法实现
+ */
+namespace Bing
+{
 // Bing特色功能：瓦片坐标转QuadKey
 QString tileXYToQuadKey(QPoint tile, int level);
 

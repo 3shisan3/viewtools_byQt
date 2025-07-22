@@ -2,9 +2,8 @@
 
 #include <QPainter>
 
-#include "view/widget/map/render/map_renderer.h"
-
-RouteLayer::RouteLayer(QObject *parent) : BaseLayer(parent)
+RouteLayer::RouteLayer(QObject *parent)
+    : BaseLayer(parent)
 {
     // 初始化默认样式
 }
@@ -21,19 +20,23 @@ void RouteLayer::clearRoute()
     emit updateRequested();
 }
 
-void RouteLayer::render(QPainter *painter, const QSize &viewport,
-                       const QGeoCoordinate &center, double zoom)
+void RouteLayer::render(QPainter *painter,
+                        const QSize &viewport,
+                        const QGeoCoordinate &center,
+                        double zoom,
+                        const TileForCoord::TileAlgorithm &algorithm)
 {
     if (m_routePoints.isEmpty() || !isVisible())
-    {
         return;
-    }
 
-    // 保存原始画笔设置
     painter->save();
-
-    // 设置抗锯齿
     painter->setRenderHint(QPainter::Antialiasing, true);
+
+    // 获取中心点像素坐标作为偏移基准
+    QPoint centerPixel = algorithm.latLongToPixelXY(
+        center.longitude(), center.latitude(), qFloor(zoom));
+    QPoint viewportCenter(viewport.width() / 2, viewport.height() / 2);
+    QPoint offset = viewportCenter - centerPixel;
 
     // 1. 绘制航线
     QPen linePen(m_lineColor, m_lineWidth);
@@ -44,8 +47,9 @@ void RouteLayer::render(QPainter *painter, const QSize &viewport,
     QPolygonF routePolygon;
     for (const QGeoCoordinate &coord : m_routePoints)
     {
-        QPointF pixelPos = MapRenderer::geoToPixel(coord, center, zoom, viewport);
-        routePolygon << pixelPos;
+        QPoint pixelPos = algorithm.latLongToPixelXY(
+            coord.longitude(), coord.latitude(), qFloor(zoom));
+        routePolygon << QPointF(pixelPos + offset);
     }
     painter->drawPolyline(routePolygon);
 
@@ -55,26 +59,31 @@ void RouteLayer::render(QPainter *painter, const QSize &viewport,
 
     for (const QGeoCoordinate &coord : m_routePoints)
     {
-        QPointF p = MapRenderer::geoToPixel(coord, center, zoom, viewport);
-        painter->drawEllipse(p, m_pointRadius, m_pointRadius);
+        QPoint pixelPos = algorithm.latLongToPixelXY(
+            coord.longitude(), coord.latitude(), qFloor(zoom));
+        painter->drawEllipse(QPointF(pixelPos + offset), m_pointRadius, m_pointRadius);
     }
 
     // 3. 绘制起点和终点（特殊样式）
     if (m_routePoints.size() >= 2)
     {
         // 起点
-        QPointF startPos = MapRenderer::geoToPixel(m_routePoints.first(), center, zoom, viewport);
-        painter->setBrush(QColor(50, 200, 50)); // 绿色起点
-        painter->drawEllipse(startPos, m_pointRadius * 1.5, m_pointRadius * 1.5);
+        QPoint startPos = algorithm.latLongToPixelXY(
+            m_routePoints.first().longitude(),
+            m_routePoints.first().latitude(),
+            qFloor(zoom));
+        painter->setBrush(QColor(50, 200, 50));
+        painter->drawEllipse(QPointF(startPos + offset), m_pointRadius * 1.5, m_pointRadius * 1.5);
 
         // 终点
-        QPointF endPos = MapRenderer::geoToPixel(m_routePoints.last(), center, zoom, viewport);
-        painter->setBrush(QColor(200, 50, 50)); // 红色终点
-        painter->drawEllipse(endPos, m_pointRadius * 1.5, m_pointRadius * 1.5);
+        QPoint endPos = algorithm.latLongToPixelXY(
+            m_routePoints.last().longitude(),
+            m_routePoints.last().latitude(),
+            qFloor(zoom));
+        painter->setBrush(QColor(200, 50, 50));
+        painter->drawEllipse(QPointF(endPos + offset), m_pointRadius * 1.5, m_pointRadius * 1.5);
     }
 
-    // 恢复原始画笔设置
     painter->restore();
-
     emit renderingComplete();
 }

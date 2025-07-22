@@ -1,5 +1,5 @@
-#ifndef ROUTE_LAYER_H
-#define ROUTE_LAYER_H
+#ifndef SSMAP_ROUTE_LAYER_H
+#define SSMAP_ROUTE_LAYER_H
 
 #include "base_layer.h"
 
@@ -17,8 +17,11 @@ public:
     void clearRoute();
 
     // 实现基类纯虚函数
-    void render(QPainter* painter, const QSize& viewport,
-                const QGeoCoordinate& center, double zoom) override;
+    void render(QPainter* painter, 
+               const QSize& viewport,
+               const QGeoCoordinate& center, 
+               double zoom,
+               const TileForCoord::TileAlgorithm& algorithm) override;
 
 private:
     // 航线数据
@@ -31,4 +34,4 @@ private:
     int m_pointRadius = 5;                     // 航点半径
 };
 
-#endif // ROUTE_LAYER_H
+#endif // SSMAP_ROUTE_LAYER_H

@@ -29,10 +29,14 @@ class TileAlgorithm
 {
 public:
     // 核心功能
+    std::function<QPoint(qreal, qreal, int)> latLongToPixelXY;
     std::function<QPoint(qreal, qreal, int)> latLongToTileXY;
+    std::function<void(QPoint, int, qreal&, qreal&)> pixelXYToLatLong;
     std::function<QPointF(QPoint, int)> tileXYToLatLong;
     std::function<qreal(qreal, int)> groundResolution;
     std::function<qreal(qreal, int, int)> mapScale;
+    std::function<qreal(qreal, qreal, int)> toLat;
+    std::function<qreal(qreal, qreal, int)> toLon;
 
     // 可选功能
     struct
@@ -41,11 +45,11 @@ public:
         std::function<void(QString, int &, int &, int &)> quadKeyToTileXY;
     } bingFeatures;
 
-    struct
-    {
-        std::function<qreal(qreal, qreal, int)> toLat;
-        std::function<qreal(qreal, qreal, int)> toLon;
-    } standardFeatures;
+    // struct
+    // {
+    //     std::function<qreal(qreal, qreal, int)> toLat;
+    //     std::function<qreal(qreal, qreal, int)> toLon;
+    // } standardFeatures;
 
     // 功能支持检查
     bool supportsBingFeatures() const
@@ -53,10 +57,10 @@ public:
         return bingFeatures.tileXYToQuadKey && bingFeatures.quadKeyToTileXY;
     }
 
-    bool supportsStandardFeatures() const
-    {
-        return standardFeatures.toLat && standardFeatures.toLon;
-    }
+    // bool supportsStandardFeatures() const
+    // {
+    //     return standardFeatures.toLat && standardFeatures.toLon;
+    // }
 };
 
 class TileAlgorithmFactory
@@ -84,29 +88,27 @@ public:
 private:
     static TileAlgorithm createStandard()
     {
-        return {
-            Standard::latLongToTileXY,
-            Standard::tileXYToLatLong,
-            Standard::groundResolution,
-            Standard::mapScale,
-            {}, // bingFeatures
-            {   // standardFeatures
-             Standard::toLat,
-             Standard::toLon}};
+        TileAlgorithm algo;
+    
+        // 核心方法
+        algo.latLongToPixelXY = Standard::latLongToPixelXY;
+        algo.latLongToTileXY = Standard::latLongToTileXY;
+        algo.pixelXYToLatLong = Standard::pixelXYToLatLong;
+        algo.tileXYToLatLong = Standard::tileXYToLatLong;
+        algo.groundResolution = TileForCoord::groundResolution;
+        algo.mapScale = TileForCoord::mapScale;
+        algo.toLat = Standard::toLat;
+        algo.toLon = Standard::toLon;
+        
+        return algo; 
     }
 
     static TileAlgorithm createBing()
     {
-        return {
-            Bing::latLongToTileXY,
-            Bing::tileXYToLatLong,
-            Bing::groundResolution,
-            Bing::mapScale,
-            {// bingFeatures
-             Bing::tileXYToQuadKey,
-             Bing::quadKeyToTileXY},
-            {} // standardFeatures
-        };
+        TileAlgorithm algo = createStandard();
+        algo.bingFeatures.tileXYToQuadKey = Bing::tileXYToQuadKey;
+        algo.bingFeatures.quadKeyToTileXY = Bing::quadKeyToTileXY;
+        return algo;
     }
 };
 
