@@ -15,7 +15,9 @@ bool SsDiskCacheManager::hasTile(int x, int y, int z) const
 
 bool SsDiskCacheManager::saveTile(int x, int y, int z, const QPixmap &tile)
 {
-    return tile.save(getCachePath(x, y, z), "PNG");
+    QString path = getCachePath(x, y, z);
+    QDir().mkpath(QFileInfo(path).absolutePath()); // 确保目录存在
+    return tile.save(path, "PNG");
 }
 
 QPixmap SsDiskCacheManager::loadTile(int x, int y, int z) const
@@ -25,9 +27,17 @@ QPixmap SsDiskCacheManager::loadTile(int x, int y, int z) const
     return pixmap;
 }
 
+void SsDiskCacheManager::setSaveDir(const QString &path)
+{
+    if (path.isEmpty() || !QDir().mkpath(path))
+        return;
+
+    m_cacheDir = path;
+}
+
 QString SsDiskCacheManager::getCachePath(int x, int y, int z) const
 {
-    return QString("%1/%2_%3_%4.png").arg(m_cacheDir).arg(z).arg(x).arg(y);
+    return QString("%1/%2/%3/%4.png").arg(m_cacheDir).arg(z).arg(x).arg(y);
 }
 
 void SsDiskCacheManager::clearCache()

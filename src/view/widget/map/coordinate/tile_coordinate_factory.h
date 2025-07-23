@@ -29,14 +29,14 @@ class TileAlgorithm
 {
 public:
     // 核心功能
-    std::function<QPoint(qreal, qreal, int)> latLongToPixelXY;
-    std::function<QPoint(qreal, qreal, int)> latLongToTileXY;
-    std::function<void(QPoint, int, qreal&, qreal&)> pixelXYToLatLong;
+    std::function<QPointF(double, double, int)> latLongToPixelXY;
+    std::function<QPoint(double, double, int)> latLongToTileXY;
+    std::function<void(QPointF, int, double &, double &)> pixelXYToLatLong;
     std::function<QPointF(QPoint, int)> tileXYToLatLong;
-    std::function<qreal(qreal, int)> groundResolution;
-    std::function<qreal(qreal, int, int)> mapScale;
-    std::function<qreal(qreal, qreal, int)> toLat;
-    std::function<qreal(qreal, qreal, int)> toLon;
+    std::function<double(double, int)> groundResolution;
+    std::function<double(double, int, int)> mapScale;
+    std::function<double(double, double, int)> toLat;
+    std::function<double(double, double, int)> toLon;
 
     // 可选功能
     struct

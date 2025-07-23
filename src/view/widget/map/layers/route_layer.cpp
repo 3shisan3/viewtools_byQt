@@ -33,10 +33,10 @@ void RouteLayer::render(QPainter *painter,
     painter->setRenderHint(QPainter::Antialiasing, true);
 
     // 获取中心点像素坐标作为偏移基准
-    QPoint centerPixel = algorithm.latLongToPixelXY(
+    QPointF centerPixel = algorithm.latLongToPixelXY(
         center.longitude(), center.latitude(), qFloor(zoom));
-    QPoint viewportCenter(viewport.width() / 2, viewport.height() / 2);
-    QPoint offset = viewportCenter - centerPixel;
+    QPointF viewportCenter(viewport.width() / 2, viewport.height() / 2);
+    QPointF offset = viewportCenter - centerPixel;
 
     // 1. 绘制航线
     QPen linePen(m_lineColor, m_lineWidth);
@@ -47,7 +47,7 @@ void RouteLayer::render(QPainter *painter,
     QPolygonF routePolygon;
     for (const QGeoCoordinate &coord : m_routePoints)
     {
-        QPoint pixelPos = algorithm.latLongToPixelXY(
+        QPointF pixelPos = algorithm.latLongToPixelXY(
             coord.longitude(), coord.latitude(), qFloor(zoom));
         routePolygon << QPointF(pixelPos + offset);
     }
@@ -59,7 +59,7 @@ void RouteLayer::render(QPainter *painter,
 
     for (const QGeoCoordinate &coord : m_routePoints)
     {
-        QPoint pixelPos = algorithm.latLongToPixelXY(
+        QPointF pixelPos = algorithm.latLongToPixelXY(
             coord.longitude(), coord.latitude(), qFloor(zoom));
         painter->drawEllipse(QPointF(pixelPos + offset), m_pointRadius, m_pointRadius);
     }
@@ -68,7 +68,7 @@ void RouteLayer::render(QPainter *painter,
     if (m_routePoints.size() >= 2)
     {
         // 起点
-        QPoint startPos = algorithm.latLongToPixelXY(
+        QPointF startPos = algorithm.latLongToPixelXY(
             m_routePoints.first().longitude(),
             m_routePoints.first().latitude(),
             qFloor(zoom));
@@ -76,7 +76,7 @@ void RouteLayer::render(QPainter *painter,
         painter->drawEllipse(QPointF(startPos + offset), m_pointRadius * 1.5, m_pointRadius * 1.5);
 
         // 终点
-        QPoint endPos = algorithm.latLongToPixelXY(
+        QPointF endPos = algorithm.latLongToPixelXY(
             m_routePoints.last().longitude(),
             m_routePoints.last().latitude(),
             qFloor(zoom));

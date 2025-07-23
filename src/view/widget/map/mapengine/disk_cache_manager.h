@@ -13,6 +13,8 @@ public:
     QPixmap loadTile(int x, int y, int z) const;
     void clearCache();
 
+    void setSaveDir(const QString &path);
+
     QString getCachePath(int x, int y, int z) const;
 
 private:

@@ -15,16 +15,62 @@ namespace TileForCoord
  * c = 2·atan2(√a, √(1−a))
  * d = R·c
  */
-qreal toDistance(qreal lon1, qreal lat1, qreal lon2, qreal lat2)
+double toDistance(double lon1, double lat1, double lon2, double lat2)
 {
-    // 实现Haversine公式计算两点间距离
-    qreal dLat = qDegreesToRadians(lat2 - lat1);
-    qreal dLon = qDegreesToRadians(lon2 - lon1);
-    qreal a = qSin(dLat / 2) * qSin(dLat / 2) +
-              qCos(qDegreesToRadians(lat1)) * qCos(qDegreesToRadians(lat2)) *
-              qSin(dLon / 2) * qSin(dLon / 2);
-    qreal c = 2 * qAtan2(qSqrt(a), qSqrt(1 - a));
-    return EARTH_AVERAGE_RADIUS * c;
+    // 使用Vincenty公式提高精度
+    double phi1 = qDegreesToRadians(lat1);
+    double phi2 = qDegreesToRadians(lat2);
+    double lambda1 = qDegreesToRadians(lon1);
+    double lambda2 = qDegreesToRadians(lon2);
+    
+    double a = EARTH_EQUATOR_RADIUS;
+    double b = EARTH_POLAR_RADIUS;
+    double f = (a - b) / a;  // 扁率
+    
+    double L = lambda2 - lambda1;
+    double U1 = atan((1 - f) * tan(phi1));
+    double U2 = atan((1 - f) * tan(phi2));
+    
+    double sinU1 = sin(U1), cosU1 = cos(U1);
+    double sinU2 = sin(U2), cosU2 = cos(U2);
+    
+    double lambda = L, lambdaP, iterLimit = 100;
+    double cosSqAlpha, sinSigma, cosSigma, cos2SigmaM, sigma, sinLambda, cosLambda;
+    
+    do {
+        sinLambda = sin(lambda);
+        cosLambda = cos(lambda);
+        sinSigma = sqrt((cosU2 * sinLambda) * (cosU2 * sinLambda) + 
+                       (cosU1 * sinU2 - sinU1 * cosU2 * cosLambda) * 
+                       (cosU1 * sinU2 - sinU1 * cosU2 * cosLambda));
+        if (sinSigma == 0) return 0;  // 重合点
+        
+        cosSigma = sinU1 * sinU2 + cosU1 * cosU2 * cosLambda;
+        sigma = atan2(sinSigma, cosSigma);
+        double sinAlpha = cosU1 * cosU2 * sinLambda / sinSigma;
+        cosSqAlpha = 1 - sinAlpha * sinAlpha;
+        cos2SigmaM = cosSigma - 2 * sinU1 * sinU2 / cosSqAlpha;
+        
+        if (std::isnan(cos2SigmaM)) cos2SigmaM = 0;  // 赤道线
+        
+        double C = f / 16 * cosSqAlpha * (4 + f * (4 - 3 * cosSqAlpha));
+        lambdaP = lambda;
+        lambda = L + (1 - C) * f * sinAlpha * 
+                (sigma + C * sinSigma * (cos2SigmaM + C * cosSigma * (-1 + 2 * cos2SigmaM * cos2SigmaM)));
+    } while (fabs(lambda - lambdaP) > 1e-12 && --iterLimit > 0);
+    
+    if (iterLimit == 0) return 0;  // 公式不收敛
+    
+    double uSq = cosSqAlpha * (a * a - b * b) / (b * b);
+    double A = 1 + uSq / 16384 * (4096 + uSq * (-768 + uSq * (320 - 175 * uSq)));
+    double B = uSq / 1024 * (256 + uSq * (-128 + uSq * (74 - 47 * uSq)));
+    double deltaSigma = B * sinSigma * (cos2SigmaM + B / 4 * 
+                       (cosSigma * (-1 + 2 * cos2SigmaM * cos2SigmaM) - 
+                       B / 6 * cos2SigmaM * (-3 + 4 * sinSigma * sinSigma) * 
+                       (-3 + 4 * cos2SigmaM * cos2SigmaM)));
+    
+    double s = b * A * (sigma - deltaSigma);
+    return s;
 }
 
 uint mapSize(int level)
@@ -32,92 +78,82 @@ uint mapSize(int level)
     return static_cast<uint>(256 * qPow(2.0, level));
 }
 
-qreal groundResolution(qreal lat, int level)
+double groundResolution(double lat, int level)
 {
+    lat = clipLat(lat);
     return cos(lat * M_PI / 180.0) * 2 * M_PI * EARTH_EQUATOR_RADIUS / mapSize(level);
 }
 
-qreal mapScale(qreal lat, int level, int screenDpi)
+double mapScale(double lat, int level, int screenDpi)
 {
     return groundResolution(lat, level) * screenDpi / 0.0254;
 }
 
 namespace Standard
 {
-QPoint latLongToPixelXY(qreal lon, qreal lat, int level)
+QPointF latLongToPixelXY(double lon, double lat, int level)
 {
-    lon = TileForCoord::clipLon(lon);
-    lat = TileForCoord::clipLat(lat);
+    lon = clipLon(lon);
+    lat = clipLat(lat);
 
-    qreal x = (lon + 180) / 360;
-    qreal sinLat = qSin(lat * M_PI / 180);
-    qreal y = 0.5 - qLn((1 + sinLat) / (1 - sinLat)) / (4 * M_PI);
+    // 优化墨卡托投影计算
+    double x = (lon + 180.0) / 360.0;
+    
+    // 使用更精确的墨卡托投影公式
+    double sinLat = sin(lat * M_PI / 180.0);
+    double y = 0.5 - log((1.0 + sinLat) / (1.0 - sinLat)) / (4.0 * M_PI);
 
-    uint size = TileForCoord::mapSize(level);
-    qreal pixelX = x * size + 0.5;
-    pixelX = TileForCoord::clip(pixelX, 0, size - 1);
-    qreal pixelY = y * size + 0.5;
-    pixelY = TileForCoord::clip(pixelY, 0, size - 1);
+    uint size = mapSize(level);
+    double pixelX = x * size;
+    double pixelY = y * size;
+    
+    // 边界处理（不再需要round，保留小数部分）
+    pixelX = clip(pixelX, 0.0, size - 1.0);
+    pixelY = clip(pixelY, 0.0, size - 1.0);
 
-    return QPoint(pixelX, pixelY);
+    return QPointF(pixelX, pixelY);
 }
 
-void pixelXYToLatLong(QPoint pos, int level, qreal &lon, qreal &lat)
+void pixelXYToLatLong(QPointF pos, int level, double &lon, double &lat)
 {
-    qreal mapSize = TileForCoord::mapSize(level);
+    double mapSize = static_cast<double>(TileForCoord::mapSize(level));
+    
+    // 使用双精度计算
+    double x = (clip(pos.x(), 0.0, mapSize - 1.0) / mapSize) - 0.5;
+    lon = x * 360.0;
 
-    qreal x = (TileForCoord::clip(pos.x(), 0, mapSize - 1) / mapSize) - 0.5;
-    lon = x * 360;
-
-    qreal y = 0.5 - (pos.y() / mapSize);
-    lat = 90.0 - 360.0 * atan(exp(-y * 2 * M_PI)) / M_PI;
+    double y = 0.5 - (clip(pos.y(), 0, static_cast<int>(mapSize - 1)) / mapSize);
+    // 使用更精确的反墨卡托投影
+    lat = 90.0 - 360.0 * atan(exp(-y * 2.0 * M_PI)) / M_PI;
 }
 
-/**
- * @brief 经纬度转瓦片坐标
- * @param lon 经度
- * @param lat 纬度
- * @param level 缩放级别（0-通常为世界视图）
- * @return 瓦片XY坐标（原点在左上角）
- * 
- * @note 算法流程：
- * 1. 标准化经度到[-180,180]，纬度到有效范围
- * 2. 经度→[0,1]范围：x = (lon + 180)/360
- * 3. 纬度→墨卡托投影y值：y = 0.5 - ln((1+sinφ)/(1-sinφ))/(4π)
- * 4. 根据级别缩放：tileX = floor(x * 2^level)
- */
-QPoint latLongToTileXY(qreal lon, qreal lat, int level)
+QPoint latLongToTileXY(double lon, double lat, int level)
 {
-    QPoint pixel = latLongToPixelXY(lon, lat, level);
-    return QPoint(pixel.x() / 256, pixel.y() / 256);
+    QPointF pixel = latLongToPixelXY(lon, lat, level);
+    return QPoint(static_cast<int>(floor(pixel.x() / 256.0)),
+                 static_cast<int>(floor(pixel.y() / 256.0)));
 }
 
-/**
- * @brief 瓦片坐标转回经纬度
- * @param tile 瓦片XY坐标
- * @param level 缩放级别
- * @return 瓦片左上角对应的经纬度
- */
 QPointF tileXYToLatLong(QPoint tile, int level)
 {
-    qreal lon, lat;
-    pixelXYToLatLong(QPoint(tile.x() * 256, tile.y() * 256), level, lon, lat);
+    double lon, lat;
+    pixelXYToLatLong(QPointF(tile.x() * 256.0, tile.y() * 256.0), level, lon, lat);
     return QPointF(lon, lat);
 }
 
-qreal toLat(qreal lon, qreal lat, int dis)
+double toLat(double lon, double lat, int dis)
 {
     // 实现纬度移动计算
-    qreal d = dis / EARTH_AVERAGE_RADIUS;
-    qreal newLat = lat + qRadiansToDegrees(d);
+    double d = dis / EARTH_AVERAGE_RADIUS;
+    double newLat = lat + qRadiansToDegrees(d);
     return clipLat(newLat);
 }
 
-qreal toLon(qreal lon, qreal lat, int dis)
+double toLon(double lon, double lat, int dis)
 {
     // 实现经度移动计算
-    qreal d = dis / (EARTH_AVERAGE_RADIUS * qCos(qDegreesToRadians(lat)));
-    qreal newLon = lon + qRadiansToDegrees(d);
+    double d = dis / (EARTH_AVERAGE_RADIUS * cos(qDegreesToRadians(lat)));
+    double newLon = lon + qRadiansToDegrees(d);
     return clipLon(newLon);
 }
 

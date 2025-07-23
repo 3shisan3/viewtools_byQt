@@ -35,6 +35,7 @@ public:
 
     // 配置项操作
     void setZoomBehavior(bool zoomAtMousePosition);
+    void setTileSaveDisk(bool toAutoSave, const QString &saveDir = "");
 
     // 图层管理
     void addLayer(BaseLayer* layer);
@@ -44,7 +45,6 @@ public:
     // 地图操作
     void setCenter(const QGeoCoordinate& center);
     void setZoomLevel(double zoom);
-    void panTo(const QGeoCoordinate& center);
     void zoomTo(const QGeoCoordinate& center, double zoom);
 
     // 瓦片源配置
@@ -52,7 +52,7 @@ public:
     void setTileUrlTemplate(const QString& urlTemplate, const QStringList& subdomains = QStringList());
 
     // 获取当前状态
-    QGeoCoordinate center() const { return m_center; }
+    QGeoCoordinate currentCenter() const;
     double zoomLevel() const { return m_zoomLevel; }
 
 protected:
@@ -87,6 +87,7 @@ private:
 
     // 一些配置项
     bool m_zoomAtMousePos;  // 地图缩放基于地图中心还是鼠标所在位置
+    bool m_autoSaveDisk;        // 是否自动存向磁盘
 
     // 成员变量
     QGraphicsScene* m_scene;

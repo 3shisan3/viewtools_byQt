@@ -29,6 +29,7 @@ SsMapGraphicsView::SsMapGraphicsView(QWidget *parent)
 
     // 默认配置
     setZoomBehavior(true); // 开启鼠标追踪(如果想要放大缩小鼠标所在位置（以视图中心放大缩小可注释）类似功能需要启用)
+    setTileSaveDisk(true); // 默认开启自动缓存瓦片到磁盘
     // 默认算法
     setTileAlgorithm(TileForCoord::TileAlgorithmFactory::AlgorithmType::Standard);
 
@@ -43,6 +44,15 @@ SsMapGraphicsView::~SsMapGraphicsView()
 }
 
 /**
+ * @brief 获取当前视图中心点对应的地理坐标
+ */
+QGeoCoordinate SsMapGraphicsView::currentCenter() const
+{
+    QPointF viewCenter(width() / 2.0, height() / 2.0);
+    return pixelToGeo(mapToScene(viewCenter.toPoint()));
+}
+
+/**
  * @brief 设置地图缩放基于地图中心还是鼠标所在位置
  */
 void SsMapGraphicsView::setZoomBehavior(bool zoomAtMousePosition)
@@ -50,6 +60,19 @@ void SsMapGraphicsView::setZoomBehavior(bool zoomAtMousePosition)
     m_zoomAtMousePos = zoomAtMousePosition;
     setMouseTracking(zoomAtMousePosition);
 };
+
+/**
+ * @brief 设置瓦片地图是否自动缓存到磁盘，及缓存父目录
+ */
+void SsMapGraphicsView::setTileSaveDisk(bool toAutoSave, const QString &saveDir)
+{
+    m_autoSaveDisk = toAutoSave;
+
+    if (m_autoSaveDisk && !saveDir.isEmpty())
+    {
+        m_diskCache.setSaveDir(saveDir);
+    }
+}
 
 /**
  * @brief 添加图层到地图
@@ -91,7 +114,7 @@ void SsMapGraphicsView::clearLayers()
 }
 
 /**
- * @brief 设置地图中心点
+ * @brief 设置地图中心点(平移到指定位置)
  */
 void SsMapGraphicsView::setCenter(const QGeoCoordinate &center)
 {
@@ -114,14 +137,6 @@ void SsMapGraphicsView::setZoomLevel(double zoom)
         m_zoomLevel = qBound(1.0, zoom, 22.0);
         updateViewport();
     }
-}
-
-/**
- * @brief 平移到指定位置
- */
-void SsMapGraphicsView::panTo(const QGeoCoordinate &center)
-{
-    setCenter(center);
 }
 
 /**
@@ -188,10 +203,11 @@ void SsMapGraphicsView::wheelEvent(QWheelEvent *event)
         // 通过滚动条调整视图位置（保持鼠标点视觉位置不变）
         horizontalScrollBar()->setValue(qRound(newMouseScenePos.x() - mousePos.x()));
         verticalScrollBar()->setValue(qRound(newMouseScenePos.y() - mousePos.y()));
-
-        // 同步 m_center 到当前视图中心
-        QPointF viewCenter = mapToScene(viewport()->rect().center());
-        m_center = pixelToGeo(viewCenter);  // todo存在公式导致的误差，待解决
+    }
+    else
+    {
+        // 基于视图中心缩放
+        updateViewport();
     }
 
     // 统一请求瓦片
@@ -208,6 +224,7 @@ void SsMapGraphicsView::mousePressEvent(QMouseEvent *event)
     {
         m_lastMousePos = event->pos();
         m_isDragging = true;
+        m_center = currentCenter(); // 使用统一方法获取当前中心点
         setCursor(Qt::ClosedHandCursor);
     }
     QGraphicsView::mousePressEvent(event);
@@ -220,16 +237,15 @@ void SsMapGraphicsView::mouseMoveEvent(QMouseEvent *event)
 {
     if (m_isDragging)
     {
-        QPointF delta = event->pos() - m_lastMousePos;
+        QPoint delta = event->pos() - m_lastMousePos;
         m_lastMousePos = event->pos();
 
-        // 转换为地理坐标偏移
-        QPointF centerPixel = geoToPixel(m_center);
-        centerPixel -= delta;
-        QGeoCoordinate newCenter = pixelToGeo(centerPixel);
-
+        // 直接调整滚动条位置（更精确的控制）
+        horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
+        verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
+        
         // 使用 setCenter 来更新中心点，复用相同的逻辑
-        setCenter(newCenter);
+        setCenter(currentCenter());
     }
     QGraphicsView::mouseMoveEvent(event);
 }
@@ -257,21 +273,12 @@ void SsMapGraphicsView::resizeEvent(QResizeEvent *event)
 }
 
 /**
- * @brief       窗口显示时设置显示瓦片的视图位置
- * @param event
+ * @brief 窗口显示时设置显示瓦片的视图位置
  */
 void SsMapGraphicsView::showEvent(QShowEvent* event)
 {
     QGraphicsView::showEvent(event);
-    
-    int w = int(qPow(2, m_zoomLevel) * 256);
-    m_scene->setSceneRect(0, 0, w, w);
-    
-    // 初始化视图位置
-    QPoint pixel = m_tileAlgorithm.latLongToPixelXY(
-        m_center.longitude(), m_center.latitude(), qFloor(m_zoomLevel));
-    QPointF scenePos(pixel.x() - width()/2, pixel.y() - height()/2);
-    centerOn(scenePos);
+    updateViewport();
 }
 
 /**
@@ -289,7 +296,7 @@ void SsMapGraphicsView::paintEvent(QPaintEvent *event)
 }
 
 /**
- * @brief 更新视图范围
+ * @brief 更新视图范围（核心方法）
  */
 void SsMapGraphicsView::updateViewport()
 {
@@ -297,10 +304,16 @@ void SsMapGraphicsView::updateViewport()
     int w = int(qPow(2, m_zoomLevel) * 256);
     m_scene->setSceneRect(0, 0, w, w);
 
-    // 重新计算并设置中心点
-    QPoint pixel = m_tileAlgorithm.latLongToPixelXY(
+    // 计算中心点对应的像素坐标
+    QPointF pixel = m_tileAlgorithm.latLongToPixelXY(
         m_center.longitude(), m_center.latitude(), qFloor(m_zoomLevel));
-    centerOn(QPointF(pixel.x() - width()/2, pixel.y() - height()/2));
+    
+    // 计算视图中心应该对准的scene位置
+    QPointF sceneCenter(pixel.x() - width()/2, pixel.y() - height()/2);
+    
+    // 直接设置滚动条位置（避免centerOn的潜在问题）
+    horizontalScrollBar()->setValue(sceneCenter.x());
+    verticalScrollBar()->setValue(sceneCenter.y());
 
     // 请求可见区域的瓦片
     requestVisibleTiles();
@@ -314,7 +327,7 @@ void SsMapGraphicsView::requestVisibleTiles()
     // 获取当前视图的瓦片范围
     QRectF viewRect = mapToScene(viewport()->rect()).boundingRect();
 
-    // 直接使用像素坐标计算瓦片范围（更高效）
+    // 直接使用像素坐标计算瓦片范围
     QPoint tlTile = QPoint(qFloor(viewRect.left() / 256.0),
                            qFloor(viewRect.top() / 256.0));
     QPoint brTile = QPoint(qFloor(viewRect.right() / 256.0),
@@ -342,10 +355,8 @@ void SsMapGraphicsView::requestVisibleTiles()
  */
 QPointF SsMapGraphicsView::geoToPixel(const QGeoCoordinate &coord) const
 {
-    QPoint pixel = m_tileAlgorithm.latLongToPixelXY(
+    return m_tileAlgorithm.latLongToPixelXY(
         coord.longitude(), coord.latitude(), qFloor(m_zoomLevel));
-
-    return QPointF(pixel.x(), pixel.y());
 }
 
 /**
@@ -353,10 +364,10 @@ QPointF SsMapGraphicsView::geoToPixel(const QGeoCoordinate &coord) const
  */
 QGeoCoordinate SsMapGraphicsView::pixelToGeo(const QPointF &pixel) const
 {
-    qreal lon, lat;
+    double lon, lat;
     // 直接调用算法，无需额外偏移计算
     m_tileAlgorithm.pixelXYToLatLong(
-        QPoint(static_cast<int>(pixel.x()), static_cast<int>(pixel.y())),
+        pixel,
         qFloor(m_zoomLevel),
         lon, lat
     );
@@ -390,7 +401,7 @@ void SsMapGraphicsView::loadTile(int x, int y, int z)
     }
 
     // 检查磁盘缓存
-    if (m_diskCache.hasTile(x, y, z))
+    if (m_autoSaveDisk && m_diskCache.hasTile(x, y, z))
     {
         QPixmap tile = m_diskCache.loadTile(x, y, z);
         if (!tile.isNull())
@@ -423,7 +434,8 @@ void SsMapGraphicsView::handleTileReceived(int x, int y, int z, const QPixmap &t
 
     // 缓存瓦片
     m_memoryCache.insert(x, y, z, tile);
-    m_diskCache.saveTile(x, y, z, tile);
+    if (m_autoSaveDisk)
+        m_diskCache.saveTile(x, y, z, tile);
 
     // 添加到场景
     QGraphicsPixmapItem *item = m_scene->addPixmap(tile);
@@ -458,7 +470,7 @@ void SsMapGraphicsView::renderLayers(QPainter *painter)
 
     // 设置视图变换，使图层渲染与地图坐标对齐
     QTransform transform;
-    QPoint centerPixel = m_tileAlgorithm.latLongToPixelXY(
+    QPointF centerPixel = m_tileAlgorithm.latLongToPixelXY(
         m_center.longitude(), m_center.latitude(), qFloor(m_zoomLevel));
     transform.translate(width() / 2 - centerPixel.x(), height() / 2 - centerPixel.y());
     painter->setTransform(transform);

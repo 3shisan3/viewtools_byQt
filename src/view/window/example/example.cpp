@@ -155,7 +155,7 @@ void ExampleWindow::extraFeatures()
         mapComponent->setTileUrlTemplate("https://wprd01.is.autonavi.com/appmaptile?&style=6&lang=zh_cn&scl=1&ltype=0&x={x}&y={y}&z={z}");
 
         mapComponent->setCenter(QGeoCoordinate(31.2304, 121.4737)); // 上海
-        mapComponent->setZoomLevel(14);
+        mapComponent->setZoomLevel(18);
         
         // 设置船舶位置 (示例坐标)
         
