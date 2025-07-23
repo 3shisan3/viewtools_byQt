@@ -18,6 +18,7 @@ Version history
 #include <QGeoCoordinate>
 #include <QGraphicsScene>
 #include <QGraphicsView>
+#include <QPinchGesture>  // 添加手势识别支持
 #include <QSet>
 
 #include "view/widget/map/layers/route_layer.h"
@@ -65,6 +66,13 @@ protected:
     void showEvent(QShowEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
 
+    // 重写手势事件
+    bool event(QEvent *event) override;
+    void gestureEvent(QGestureEvent *event);
+    void handlePinchGesture(QPinchGesture *gesture);
+    // 触控点跟踪
+    void handleTouchPoint(const QPointF &pos, bool isRelease = false);
+
 private slots:
     void handleTileReceived(int x, int y, int z, const QPixmap& tile);
     void handleTileFailed(int x, int y, int z, const QString& error);
@@ -107,6 +115,7 @@ private:
     QPoint m_lastMousePos;
     QSet<QString> m_requestedTiles;
     bool m_isDragging = false;
+    int m_activeTouchId = -1;  // 当前激活的触控点ID
 };
 
 

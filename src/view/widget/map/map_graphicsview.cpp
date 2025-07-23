@@ -8,6 +8,12 @@
 #include <QtMath>
 #include <QWheelEvent>
 
+#if QT_VERSION_MAJOR >= 6
+    using TouchDeviceType = QPointingDevice;
+#else
+    using TouchDeviceType = QTouchDevice;
+#endif
+
 /**
  * @brief 构造函数，初始化地图视图
  */
@@ -26,6 +32,12 @@ SsMapGraphicsView::SsMapGraphicsView(QWidget *parent)
     // 隐藏滚动条
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    if (TouchDeviceType::devices().count() > 0) // 判断是否为触控设备
+    {
+        setAttribute(Qt::WA_AcceptTouchEvents); // 启用触摸事件
+        grabGesture(Qt::PinchGesture);          // 捏合手势
+        grabGesture(Qt::PanGesture);            // 平移手势
+    }
 
     // 默认配置
     setZoomBehavior(true); // 开启鼠标追踪(如果想要放大缩小鼠标所在位置（以视图中心放大缩小可注释）类似功能需要启用)
@@ -210,10 +222,13 @@ void SsMapGraphicsView::wheelEvent(QWheelEvent *event)
 }
 
 /**
- * @brief 鼠标按下事件处理
+ * @brief 鼠标按下事件处理（兼容触控和鼠标）
  */
 void SsMapGraphicsView::mousePressEvent(QMouseEvent *event)
 {
+    if (m_activeTouchId != -1) return; // 触控优先
+    if (event->source() != Qt::MouseEventNotSynthesized) return;
+
     if (event->button() == Qt::LeftButton)
     {
         m_lastMousePos = event->pos();
@@ -281,6 +296,114 @@ void SsMapGraphicsView::paintEvent(QPaintEvent *event)
     QPainter painter(viewport());
     painter.setRenderHint(QPainter::Antialiasing, true);
     renderLayers(&painter);
+}
+
+/**
+ * @brief 重写event函数拦截手势事件
+ */
+bool SsMapGraphicsView::event(QEvent *event)
+{
+    switch (event->type())
+    {
+    case QEvent::Gesture:
+        gestureEvent(static_cast<QGestureEvent *>(event));
+        return true;
+    case QEvent::TouchBegin:
+    case QEvent::TouchUpdate:
+    case QEvent::TouchEnd:
+    {
+        QTouchEvent *touchEvent = static_cast<QTouchEvent *>(event);
+#if QT_VERSION_MAJOR >= 6
+        const auto &touchPoints = touchEvent->points();
+#else
+        const auto &touchPoints = touchEvent->touchPoints();
+#endif
+        if (m_activeTouchId != -1)
+        {
+            for (const auto &point : touchPoints)
+            {
+                if (point.id() == m_activeTouchId)
+                {
+#if QT_VERSION_MAJOR >= 6
+                    handleTouchPoint(point.position(), event->type() == QEvent::TouchEnd);
+#else
+                    handleTouchPoint(point.pos(), event->type() == QEvent::TouchEnd);
+#endif
+                    if (event->type() == QEvent::TouchEnd)
+                    {
+                        m_activeTouchId = -1;
+                    }
+                    return true;
+                }
+            }
+            m_activeTouchId = -1;
+        }
+        if (event->type() == QEvent::TouchBegin && !touchPoints.isEmpty())
+        {
+#if QT_VERSION_MAJOR >= 6
+            m_activeTouchId = touchPoints.first().id();
+            handleTouchPoint(touchPoints.first().position());
+#else
+            m_activeTouchId = touchPoints.first().id();
+            handleTouchPoint(touchPoints.first().pos());
+#endif
+        }
+        return true;
+    }
+    default:
+        return QGraphicsView::event(event);
+    }
+}
+
+// 手势处理
+void SsMapGraphicsView::gestureEvent(QGestureEvent *event)
+{
+    if (QGesture *pinch = event->gesture(Qt::PinchGesture))
+    {
+        handlePinchGesture(static_cast<QPinchGesture *>(pinch));
+    }
+    event->accept();
+}
+
+void SsMapGraphicsView::handlePinchGesture(QPinchGesture *gesture)
+{
+    static qreal initialZoom = 0;
+    switch (gesture->state())
+    {
+    case Qt::GestureStarted:
+        initialZoom = m_zoomLevel;
+        break;
+    case Qt::GestureUpdated:
+        setZoomLevel(initialZoom * gesture->scaleFactor());
+        break;
+    case Qt::GestureFinished:
+        break;
+    default:
+        break;
+    }
+}
+
+// 触控点处理
+void SsMapGraphicsView::handleTouchPoint(const QPointF &pos, bool isRelease)
+{
+    if (isRelease)
+    {
+        m_isDragging = false;
+        return;
+    }
+
+    if (!m_isDragging)
+    {
+        m_lastMousePos = pos.toPoint();
+        m_isDragging = true;
+    }
+    else
+    {
+        QPoint delta = pos.toPoint() - m_lastMousePos;
+        horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
+        verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
+        m_lastMousePos = pos.toPoint();
+    }
 }
 
 /**
