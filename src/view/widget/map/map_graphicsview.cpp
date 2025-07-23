@@ -48,7 +48,7 @@ SsMapGraphicsView::~SsMapGraphicsView()
  */
 QGeoCoordinate SsMapGraphicsView::currentCenter() const
 {
-    QPointF viewCenter(width() / 2.0, height() / 2.0);
+    QPointF viewCenter(viewport()->width() / 2.0, viewport()->height() / 2.0);
     return pixelToGeo(mapToScene(viewCenter.toPoint()));
 }
 
@@ -204,14 +204,8 @@ void SsMapGraphicsView::wheelEvent(QWheelEvent *event)
         horizontalScrollBar()->setValue(qRound(newMouseScenePos.x() - mousePos.x()));
         verticalScrollBar()->setValue(qRound(newMouseScenePos.y() - mousePos.y()));
     }
-    else
-    {
-        // 基于视图中心缩放
-        updateViewport();
-    }
 
-    // 统一请求瓦片
-    requestVisibleTiles();
+    setCenter(currentCenter());
     event->accept();
 }
 
@@ -224,7 +218,6 @@ void SsMapGraphicsView::mousePressEvent(QMouseEvent *event)
     {
         m_lastMousePos = event->pos();
         m_isDragging = true;
-        m_center = currentCenter(); // 使用统一方法获取当前中心点
         setCursor(Qt::ClosedHandCursor);
     }
     QGraphicsView::mousePressEvent(event);
@@ -235,19 +228,11 @@ void SsMapGraphicsView::mousePressEvent(QMouseEvent *event)
  */
 void SsMapGraphicsView::mouseMoveEvent(QMouseEvent *event)
 {
+    QGraphicsView::mouseMoveEvent(event);
     if (m_isDragging)
     {
-        QPoint delta = event->pos() - m_lastMousePos;
-        m_lastMousePos = event->pos();
-
-        // 直接调整滚动条位置（更精确的控制）
-        horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
-        verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
-        
-        // 使用 setCenter 来更新中心点，复用相同的逻辑
         setCenter(currentCenter());
     }
-    QGraphicsView::mouseMoveEvent(event);
 }
 
 /**
@@ -259,6 +244,9 @@ void SsMapGraphicsView::mouseReleaseEvent(QMouseEvent *event)
     {
         m_isDragging = false;
         setCursor(Qt::ArrowCursor);
+
+        // 使用 setCenter 来更新中心点，复用相同的逻辑
+        setCenter(currentCenter());
     }
     QGraphicsView::mouseReleaseEvent(event);
 }
@@ -467,13 +455,6 @@ void SsMapGraphicsView::renderLayers(QPainter *painter)
 {
     // 保存当前视图变换
     painter->save();
-
-    // 设置视图变换，使图层渲染与地图坐标对齐
-    QTransform transform;
-    QPointF centerPixel = m_tileAlgorithm.latLongToPixelXY(
-        m_center.longitude(), m_center.latitude(), qFloor(m_zoomLevel));
-    transform.translate(width() / 2 - centerPixel.x(), height() / 2 - centerPixel.y());
-    painter->setTransform(transform);
 
     // 按顺序渲染各图层
     for (BaseLayer *layer : m_layers)

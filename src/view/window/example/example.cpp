@@ -15,6 +15,8 @@
 #include "view/component/joystick_wheel.h"
 #ifdef MAP_COMPONENT_ENABLE
 #include "view/widget/map/map_graphicsview.h"
+#include "view/widget/map/layers/route_layer.h"
+#include "view/widget/map/layers/ship_layer.h"
 #ifdef USE_QML_LOCATION
 #include "map_by_qml/map_widget.h"
 #endif
@@ -158,12 +160,18 @@ void ExampleWindow::extraFeatures()
         mapComponent->setZoomLevel(18);
         
         // 设置船舶位置 (示例坐标)
+        ShipLayer *ship = new ShipLayer(mapComponent);
+        ship->setShipPosition(QGeoCoordinate(31.2304, 121.4737), 0);
+        mapComponent->addLayer(ship);
         
         // 设置航线
+        RouteLayer *r = new RouteLayer(mapComponent);
         QVector<QGeoCoordinate> route;
         route << QGeoCoordinate(31.2304, 121.4737) 
             << QGeoCoordinate(31.2350, 121.4800)
             << QGeoCoordinate(31.2400, 121.4850);
+        r->setRoute(route);
+        mapComponent->addLayer(r);
         
         // 设置为模态对话框
         mapDialog->setModal(true);
