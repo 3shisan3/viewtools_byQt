@@ -29,9 +29,9 @@ echo "Analyzing dependencies for ${EXE_PATH}..."
 DEPENDENCIES=$(ldd "${EXE_PATH}" | awk '$3 ~ /mingw64/ {print $3}' | sort -u)
 
 # 打印识别到的依赖库
-echo "Identified dependency libraries:"
-printf '%s\n' "${DEPENDENCIES[@]}"
-echo "============================"
+# echo "Identified dependency libraries:"
+# printf '%s\n' "${DEPENDENCIES[@]}"
+# echo "============================"
 
 # 复制依赖的 DLL
 for DLL in ${DEPENDENCIES}; do

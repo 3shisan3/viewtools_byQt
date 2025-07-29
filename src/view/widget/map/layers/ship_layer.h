@@ -10,6 +10,7 @@ class ShipLayer : public BaseLayer
 public:
     explicit ShipLayer(QObject *parent = nullptr);
 
+    // heading 为角度
     void setShipPosition(const QGeoCoordinate &position, double heading);
     void updatePosition(const QGeoCoordinate &position, double heading);
     

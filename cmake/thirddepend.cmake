@@ -7,3 +7,14 @@ if (ENABLE_MEDIA_PLAYER AND NOT ANDROID)
     # 添加代码使用宏区分
     add_compile_definitions(CAN_USE_FFMPEG)
 endif()
+
+if (ANDROID)
+    FetchContent_Declare(
+      android_openssl
+      DOWNLOAD_EXTRACT_TIMESTAMP true
+      URL https://github.com/KDAB/android_openssl/archive/refs/heads/master.zip
+#      URL_HASH MD5=c97d6ad774fab16be63b0ab40f78d945 #optional
+    )
+    FetchContent_MakeAvailable(android_openssl)
+    include(${android_openssl_SOURCE_DIR}/android_openssl.cmake)
+endif()

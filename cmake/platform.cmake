@@ -23,6 +23,9 @@ if (ANDROID)
         ANDROID_EXTRA_FILES "${ANDROID_EXTRA_FILES}"
     )
 
+    # 调用函数为目标添加 OpenSSL 库
+    add_android_openssl_libraries(${PROJECT_NAME})
+
     qt_finalize_executable(${PROJECT_NAME})
 elseif (WIN32)
     # Windows 平台需要 WIN32 标志来避免控制台窗口
@@ -43,6 +46,11 @@ else()
             INSTALL_RPATH "$ORIGIN;$ORIGIN/lib;$ORIGIN/thirdlib;$ORIGIN/../lib"
         )
     endif()
+endif()
+
+# 增加构建过程中的宏
+if (ANDROID)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE RUNNING_ANDROID)
 endif()
 
 # 构建后运行依赖打包命令

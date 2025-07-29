@@ -95,7 +95,7 @@ private:
 
     // 一些配置项
     bool m_zoomAtMousePos;  // 地图缩放基于地图中心还是鼠标所在位置
-    bool m_autoSaveDisk;        // 是否自动存向磁盘
+    bool m_autoSaveDisk;    // 是否自动存向磁盘
 
     // 成员变量
     QGraphicsScene* m_scene;

@@ -41,7 +41,7 @@ SsMapGraphicsView::SsMapGraphicsView(QWidget *parent)
 
     // 默认配置
     setZoomBehavior(true); // 开启鼠标追踪(如果想要放大缩小鼠标所在位置（以视图中心放大缩小可注释）类似功能需要启用)
-    setTileSaveDisk(true); // 默认开启自动缓存瓦片到磁盘
+    setTileSaveDisk(false); // 默认开启自动缓存瓦片到磁盘
     // 默认算法
     setTileAlgorithm(TileForCoord::TileAlgorithmFactory::AlgorithmType::Standard);
 
@@ -80,6 +80,7 @@ void SsMapGraphicsView::setTileSaveDisk(bool toAutoSave, const QString &saveDir)
 {
     m_autoSaveDisk = toAutoSave;
 
+    m_memoryCache.clear();  // 两点，1.简化处理在内存中瓦片无法存到磁盘问题；2.使用本地瓦片除去内存残留瓦片干扰
     if (m_autoSaveDisk && !saveDir.isEmpty())
     {
         m_diskCache.setSaveDir(saveDir);
@@ -175,7 +176,9 @@ void SsMapGraphicsView::setTileAlgorithm(TileForCoord::TileAlgorithmFactory::Alg
 void SsMapGraphicsView::setTileUrlTemplate(const QString &urlTemplate, const QStringList &subdomains)
 {
     m_tileLoader->setUrlTemplate(urlTemplate, subdomains);
+    m_memoryCache.clear();
     updateViewport();
+    update();
 }
 
 /**
@@ -222,7 +225,7 @@ void SsMapGraphicsView::wheelEvent(QWheelEvent *event)
 }
 
 /**
- * @brief 鼠标按下事件处理（兼容触控和鼠标）
+ * @brief 鼠标按下事件处理
  */
 void SsMapGraphicsView::mousePressEvent(QMouseEvent *event)
 {
