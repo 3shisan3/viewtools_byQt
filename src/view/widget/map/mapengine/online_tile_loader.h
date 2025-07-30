@@ -31,7 +31,7 @@ struct DownTileInfo
     short retryCount = 0;   // 重试次数
 };
 
-class SsOnlineTileLoader : public QThread
+class SsOnlineTileLoader : public QObject
 {
     Q_OBJECT
 public:
@@ -40,43 +40,40 @@ public:
 
     void setUrlTemplate(const QString &templateStr, const QStringList &subdomains = QStringList());
     void requestTile(int x, int y, int z);
-    void setMaxRetryCount(int count) { 
+    void setMaxRetryCount(int count) {
         QMutexLocker locker(&m_mutex);
-        m_maxRetryCount = count; 
+        m_maxRetryCount = count;
     }
-    void setTimeout(int milliseconds) { 
+    void setTimeout(int milliseconds) {
         QMutexLocker locker(&m_mutex);
-        m_timeout = milliseconds; 
+        m_timeout = milliseconds;
     }
 
-    void stop();
+    void start(); // 启动工作线程
+    void stop();  // 停止工作线程
 
 signals:
     void tileReceived(int x, int y, int z, const QPixmap &tile);
     void tileFailed(int x, int y, int z, const QString &error);
-
-protected:
-    void run() override;
+    void internalRequestTile(int x, int y, int z); // 内部信号，用于跨线程请求
 
 private slots:
     void handleNetworkReply(QNetworkReply *reply);
-    void handleRetry(int x, int y, int z);
+    void processTileRequest(int x, int y, int z);
 
 private:
-    void startRequest(int x, int y, int z);
-    QNetworkReply* createRequest(int x, int y, int z);
+    QNetworkReply *createRequest(int x, int y, int z);
+    void handleRetry(int x, int y, int z);
 
     QMutex m_mutex;
-    enum {
-        Stopped,
-        Running,
-        Stopping
-    } m_state;
+    QThread *m_workerThread; // 工作线程指针
+    bool m_running = false;
     QNetworkAccessManager *m_networkManager;
     QString m_urlTemplate;
     QStringList m_subdomains;
     int m_maxRetryCount = 3; // 默认最大重试次数
     int m_timeout = 5000;    // 默认超时时间5秒
-    QMap<QString, DownTileInfo> m_pendingRequests; // 记录正在处理的请求
+    QMap<QString, DownTileInfo> m_pendingRequests;  // 记录正在处理的请求
 };
+
 #endif  // ONLINE_TILE_LOADER_H

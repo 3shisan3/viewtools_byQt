@@ -10,47 +10,49 @@
 #include "view/widget/map/coordinate/tile_coordinate.h"
 
 SsOnlineTileLoader::SsOnlineTileLoader(QObject *parent)
-    : QThread(parent)
-    , m_state(Stopped)
+    : QObject(parent)
+    , m_workerThread(nullptr)
+    , m_networkManager(nullptr)
 {
+    // 网络管理器在主线程创建
+    m_networkManager = new QNetworkAccessManager(this);
 }
 
 SsOnlineTileLoader::~SsOnlineTileLoader()
 {
     stop();
-    wait();
+}
+
+void SsOnlineTileLoader::start()
+{
+    if (m_workerThread)
+        return;
+
+    m_workerThread = new QThread();
+    this->moveToThread(m_workerThread);
+
+    connect(m_workerThread, &QThread::started, this, []() {
+        qDebug() << "Tile loader thread started";
+    });
+
+    // 在线程启动后建立连接
+    connect(this, &SsOnlineTileLoader::internalRequestTile, this, &SsOnlineTileLoader::processTileRequest);
+
+    connect(m_workerThread, &QThread::finished, m_workerThread, &QObject::deleteLater);
+
+    m_workerThread->start();
+    m_running = true;
 }
 
 void SsOnlineTileLoader::stop()
 {
-    QMutexLocker locker(&m_mutex);
-    if (m_state != Running)
+    if (!m_workerThread)
         return;
 
-    m_state = Stopping;
-
-    // 通过事件队列安全退出
-    QMetaObject::invokeMethod(this, []() {
-        QThread::currentThread()->quit();
-    }, Qt::QueuedConnection);
-}
-
-void SsOnlineTileLoader::run()
-{
-    QMutexLocker locker(&m_mutex);
-    m_networkManager = new QNetworkAccessManager();
-    m_state = Running;
-    locker.unlock(); // 创建完成后即可解锁
-    
-    // 进入事件循环
-    exec();
-    
-    // 清理资源
-    locker.relock();
-    m_pendingRequests.clear(); // 清理所有未完成请求
-    delete m_networkManager;
-    m_networkManager = nullptr;
-    m_state = Stopped;
+    m_running = false;
+    m_workerThread->quit();
+    m_workerThread->wait();
+    m_workerThread = nullptr;
 }
 
 void SsOnlineTileLoader::setUrlTemplate(const QString &templateStr, const QStringList &subdomains)
@@ -62,10 +64,12 @@ void SsOnlineTileLoader::setUrlTemplate(const QString &templateStr, const QStrin
 
 void SsOnlineTileLoader::requestTile(int x, int y, int z)
 {
-    QMutexLocker locker(&m_mutex);
+    if (!m_running)
+        return;
+
     QString key = QString("%1-%2-%3").arg(x).arg(y).arg(z);
 
-    // 如果已经有相同的请求在处理中，不再重复请求
+    QMutexLocker locker(&m_mutex);
     if (m_pendingRequests.contains(key))
     {
         return;
@@ -78,20 +82,14 @@ void SsOnlineTileLoader::requestTile(int x, int y, int z)
     info.retryCount = 0;
     m_pendingRequests.insert(key, info);
 
-    // 使用QueuedConnection确保跨线程调用安全
-    QMetaObject::invokeMethod(this, [this, x, y, z]() {
-        startRequest(x, y, z);
-    }, Qt::QueuedConnection);
+    // 通过信号触发跨线程处理
+    emit internalRequestTile(x, y, z);
 }
 
-void SsOnlineTileLoader::startRequest(int x, int y, int z)
+void SsOnlineTileLoader::processTileRequest(int x, int y, int z)
 {
-    QMutexLocker locker(&m_mutex);
-
-    if (m_state != Running || !m_networkManager)
+    if (!m_running)
         return;
-
-    locker.unlock();
 
     QNetworkReply *reply = createRequest(x, y, z);
     if (!reply)
@@ -105,7 +103,7 @@ void SsOnlineTileLoader::startRequest(int x, int y, int z)
         if (safeReply) {
             handleNetworkReply(safeReply);
         }
-    }, Qt::QueuedConnection);
+    });
 
     // 设置超时
     QTimer::singleShot(m_timeout, [this, safeReply]() {
@@ -164,7 +162,7 @@ QNetworkReply *SsOnlineTileLoader::createRequest(int x, int y, int z)
 
 void SsOnlineTileLoader::handleNetworkReply(QNetworkReply *reply)
 {
-    if (m_state != Running)
+    if (!m_running)
     {
         reply->deleteLater();
         return;
@@ -218,13 +216,14 @@ void SsOnlineTileLoader::handleNetworkReply(QNetworkReply *reply)
 
 void SsOnlineTileLoader::handleRetry(int x, int y, int z)
 {
-    if (m_state != Running) return;
+    if (!m_running)
+        return;
 
     QString key = QString("%1-%2-%3").arg(x).arg(y).arg(z);
     if (m_pendingRequests.contains(key))
     {
         DownTileInfo &info = m_pendingRequests[key];
         info.retryCount++;
-        startRequest(x, y, z);
+        emit internalRequestTile(x, y, z);
     }
 }

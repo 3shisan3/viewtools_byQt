@@ -59,8 +59,7 @@ SsMapGraphicsView::~SsMapGraphicsView()
     // 停止瓦片加载线程
     if(m_tileLoader)
     {
-        m_tileLoader->stop(); // 这会触发线程退出
-        m_tileLoader->wait(); // 等待线程完全退出
+        m_tileLoader->stop();
     }
 }
 
