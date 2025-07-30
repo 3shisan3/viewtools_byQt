@@ -15,9 +15,10 @@ Version history
 #ifndef ONLINE_TILE_LOADER_H
 #define ONLINE_TILE_LOADER_H
 
+#include <QMutex>
 #include <QNetworkAccessManager>
 #include <QPixmap>
-#include <QTimer>
+#include <QThread>
 
 struct DownTileInfo
 {
@@ -28,10 +29,9 @@ struct DownTileInfo
     QString format;
     QPixmap img;
     short retryCount = 0;   // 重试次数
-    QTimer* retryTimer = nullptr; // 重试定时器
 };
 
-class SsOnlineTileLoader : public QObject
+class SsOnlineTileLoader : public QThread
 {
     Q_OBJECT
 public:
@@ -40,12 +40,23 @@ public:
 
     void setUrlTemplate(const QString &templateStr, const QStringList &subdomains = QStringList());
     void requestTile(int x, int y, int z);
-    void setMaxRetryCount(int count) { m_maxRetryCount = count; }
-    void setTimeout(int milliseconds) { m_timeout = milliseconds; }
+    void setMaxRetryCount(int count) { 
+        QMutexLocker locker(&m_mutex);
+        m_maxRetryCount = count; 
+    }
+    void setTimeout(int milliseconds) { 
+        QMutexLocker locker(&m_mutex);
+        m_timeout = milliseconds; 
+    }
+
+    void stop();
 
 signals:
     void tileReceived(int x, int y, int z, const QPixmap &tile);
     void tileFailed(int x, int y, int z, const QString &error);
+
+protected:
+    void run() override;
 
 private slots:
     void handleNetworkReply(QNetworkReply *reply);
@@ -55,6 +66,12 @@ private:
     void startRequest(int x, int y, int z);
     QNetworkReply* createRequest(int x, int y, int z);
 
+    QMutex m_mutex;
+    enum {
+        Stopped,
+        Running,
+        Stopping
+    } m_state;
     QNetworkAccessManager *m_networkManager;
     QString m_urlTemplate;
     QStringList m_subdomains;

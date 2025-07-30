@@ -45,7 +45,9 @@ SsMapGraphicsView::SsMapGraphicsView(QWidget *parent)
     // 默认算法
     setTileAlgorithm(TileForCoord::TileAlgorithmFactory::AlgorithmType::Standard);
 
-    // 连接信号槽
+    // 启动瓦片加载线程
+    m_tileLoader->start();
+    // 连接信号槽(自动跨线程工作)
     connect(m_tileLoader, &SsOnlineTileLoader::tileReceived, this, &SsMapGraphicsView::handleTileReceived);
     connect(m_tileLoader, &SsOnlineTileLoader::tileFailed, this, &SsMapGraphicsView::handleTileFailed);
 }
@@ -53,6 +55,13 @@ SsMapGraphicsView::SsMapGraphicsView(QWidget *parent)
 SsMapGraphicsView::~SsMapGraphicsView()
 {
     clearLayers();
+
+    // 停止瓦片加载线程
+    if(m_tileLoader)
+    {
+        m_tileLoader->stop(); // 这会触发线程退出
+        m_tileLoader->wait(); // 等待线程完全退出
+    }
 }
 
 /**
@@ -530,7 +539,9 @@ void SsMapGraphicsView::loadTile(int x, int y, int z)
 
     // 从网络加载
     m_requestedTiles.insert(tileKey);
-    m_tileLoader->requestTile(x, y, z);
+    QMetaObject::invokeMethod(m_tileLoader, [this, x, y, z]() {
+        m_tileLoader->requestTile(x, y, z);
+    }, Qt::QueuedConnection);
 }
 
 /**
