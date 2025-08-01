@@ -1,14 +1,14 @@
 # 针对不同平台生成可执行程序
 if (ANDROID)
     # 设置 Android 包名（必须与 AndroidManifest.xml 的 package 一致）
-    set(ANDROID_PACKAGE_NAME "com.example.${PROJECT_NAME}")
+    set(ANDROID_PACKAGE_NAME "org.qtproject.example.${PROJECT_NAME}")
     # 指定 AndroidManifest.xml 路径
     set(ANDROID_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/android/AndroidManifest.xml")
     # 可选：指定 Android 资源目录
     set(ANDROID_RES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android/res")
     # 可选：指定 Android 额外文件（如 gradle 配置）
     set(ANDROID_EXTRA_FILES
-        "${CMAKE_CURRENT_SOURCE_DIR}/android/gradle.properties"
+        "${CMAKE_CURRENT_SOURCE_DIR}/android/build.gradle"
     )
 
     qt_add_executable(${PROJECT_NAME}

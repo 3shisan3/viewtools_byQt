@@ -9,6 +9,8 @@ if (ENABLE_MEDIA_PLAYER AND NOT ANDROID)
 endif()
 
 if (ANDROID)
+    include(FetchContent)
+    
     FetchContent_Declare(
       android_openssl
       DOWNLOAD_EXTRACT_TIMESTAMP true

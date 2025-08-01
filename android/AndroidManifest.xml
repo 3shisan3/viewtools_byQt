@@ -1,41 +1,126 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.${PROJECT_NAME}"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="org.qtproject.example.viewtools_byQt"
     android:versionCode="1"
     android:versionName="1.0">
 
-    <!-- 最低支持的 Android SDK 版本 -->
+    <!-- ========== SDK配置 ========== -->
+    <!-- 最低支持Android 7.0 (Nougat) 提供必要的NDK支持 -->
+    <!-- 目标版本设为Android 15 以兼容最新特性 -->
     <uses-sdk
-        android:minSdkVersion="21"
-        android:targetSdkVersion="33" />
+        android:minSdkVersion="24"
+        android:targetSdkVersion="35"
+        tools:overrideLibrary="org.qtproject.qt.android"/> <!-- 允许覆盖Qt库的minSdk限制 -->
 
-    <!-- 申请权限（可选） -->
+    <!-- ========== 权限声明 ========== -->
+    <!-- 基础网络权限 -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- 存储权限（兼容Android 10及以下） -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+
+    <!-- Android 11+的文件访问 -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <!-- Android 11+使用媒体文件专属权限 -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
+    <!-- 视频解码相关增强权限 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" /> <!-- 后台解码服务 -->
+
+    <!-- 摄像头/定位等可选权限 -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+
+    <!-- ========== 硬件特性声明 ========== -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="true"/>
+    <uses-feature android:glEsVersion="0x00030000"/> <!-- OpenGL ES 3.0支持 -->
+
+    <!-- ========== 应用配置 ========== -->
+    <!-- hardwareAccelerated            启用硬件加速
+         extractNativeLibs              为true否则无法加载.so
+         requestLegacyExternalStorage   兼容旧存储模式
+         networkSecurityConfig          自定义网络安全策略
+         usesCleartextTraffic           允许HTTP明文通信
+         allowNativeHeapPointerTagging  禁用指针标记提升稳定性
+    -->
     <application
         android:name="org.qtproject.qt.android.bindings.QtApplication"
         android:label="@string/app_name"
         android:icon="@drawable/icon"
-        android:extractNativeLibs="true">
+        android:roundIcon="@drawable/round_icon"
+        android:hardwareAccelerated="true"
+        android:extractNativeLibs="true"
+        android:requestLegacyExternalStorage="true"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:usesCleartextTraffic="true"
+        android:allowNativeHeapPointerTagging="false"
+        tools:targetApi="36">
 
-        <!-- 主 Activity -->
+        <!-- ========== 主Activity配置 ========== -->
         <activity
             android:name="org.qtproject.qt.android.bindings.QtActivity"
             android:label="@string/app_name"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:screenOrientation="portrait"
-            android:launchMode="singleTop">
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize"
+            android:screenOrientation="fullSensor"
+            android:launchMode="singleTop"
+            android:exported="true"
+            android:windowSoftInputMode="adjustPan">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- 启用 Qt 的本地库加载 -->
-            <meta-data android:name="android.app.lib_name" android:value="${PROJECT_NAME}" />
+            <!-- ========== Qt元数据 ========== -->
+            <meta-data android:name="android.app.lib_name" android:value="viewtools_byQt" />
             <meta-data android:name="android.app.qt_sources_resource_id" android:resource="@array/qt_sources" />
             <meta-data android:name="android.app.repository" android:value="default" />
+            <meta-data android:name="android.app.forceDarkMode" android:value="2" /> <!-- 启用深色模式支持 -->
+            
+            <!-- 启动画面配置 -->
+            <meta-data android:name="android.app.splash_screen_drawable" 
+                      android:resource="@drawable/splash_screen" />
         </activity>
+
+        <!-- ========== 其他组件配置 ========== -->
+        <!-- OpenSSL库支持 -->
+        <meta-data android:name="android.app.uses_openssl" android:value="true"/>
+
+        <!-- 视频解码服务（独立进程提升稳定性） -->
+        <service android:name=".MediaDecoderService"
+            android:exported="false"
+            android:process=":media_decoder"/> <!-- 冒号表示私有进程 --> 
+        
+        <!-- 后台服务（如需要） -->
+        <service android:name=".MyBackgroundService"
+            android:exported="false"
+            android:stopWithTask="true" />
+
+        <!-- 广播接收器示例 -->
+        <receiver android:name=".BootReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- 文件提供者（用于文件共享） -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

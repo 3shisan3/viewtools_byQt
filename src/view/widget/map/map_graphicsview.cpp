@@ -18,10 +18,10 @@
  * @brief 构造函数，初始化地图视图
  */
 SsMapGraphicsView::SsMapGraphicsView(QWidget *parent)
-    : QGraphicsView(parent),
-      m_scene(new QGraphicsScene(this)),
-      m_tileLoader(new SsOnlineTileLoader(this)),
-      m_diskCache(QCoreApplication::applicationDirPath() + "/map_tiles")
+    : QGraphicsView(parent)
+    , m_scene(new QGraphicsScene(this))
+    , m_tileLoader(new SsOnlineTileLoader())  // 无父对象
+    , m_diskCache(QCoreApplication::applicationDirPath() + "/map_tiles")
 {
     // 基础设置
     setScene(m_scene);  // QGraphicsView 默认 paintevent 绘制 QGraphicsScene 的内容
@@ -60,6 +60,7 @@ SsMapGraphicsView::~SsMapGraphicsView()
     if(m_tileLoader)
     {
         m_tileLoader->stop();
+        delete m_tileLoader;  // 手动释放
     }
 }
 

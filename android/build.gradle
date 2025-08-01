@@ -1,0 +1,199 @@
+// 顶层插件配置
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android' version '1.9.0' // Kotlin支持（可选但推荐）
+}
+
+// Android项目配置
+android {
+    // 基础配置
+    namespace 'org.qtproject.example.viewtools_byQt' // 必须与AndroidManifest.xml的package一致
+    compileSdkVersion 35 // 编译SDK版本
+    ndkVersion "26.1.10909125" // 与Qt使用的NDK版本一致
+
+    // 默认配置（所有变体共享）
+    defaultConfig {
+        applicationId "org.qtproject.example.viewtools_byQt" // 应用唯一ID
+        minSdkVersion 24 // 最低支持Android版本
+        targetSdkVersion 35 // 目标API级别
+        versionCode 1 // 内部版本号
+        versionName "1.0" // 用户可见版本
+
+        // 原生构建配置
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=c++_shared", // 使用共享STL库
+                          "-DANDROID_TOOLCHAIN=clang", // 使用Clang编译器
+                          "-DANDROID_PLATFORM=android-24", // 匹配minSdkVersion
+                          "-DQT_HOST_PATH=${System.getenv('QT_HOST_PATH')}", // Qt主机路径
+                          "-DCMAKE_CXX_STANDARD=17" // C++17标准
+                cppFlags "-fexceptions -frtti" // 启用异常和RTTI
+            }
+        }
+
+        // 指定构建的ABI（与Qt配置匹配）
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+            debugSymbolLevel 'FULL' // 包含完整调试符号
+        }
+
+        // 启用MultiDex（方法数超过64K时需要）
+        multiDexEnabled true
+    }
+
+/*  // Qt Creator 已内置
+    // 签名配置（关键部分）
+    signingConfigs {
+        // 调试签名（使用Android默认debug密钥）
+        debug {
+            storeFile file("${rootDir}/debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
+
+        // 发布签名（从环境变量或local.properties读取敏感信息）
+        release {
+            storeFile file("${rootDir}/release.keystore") // 密钥库路径
+            storePassword project.findProperty("KEYSTORE_PWD") ?: "" // 优先从gradle.properties读取
+            keyAlias project.findProperty("KEY_ALIAS") ?: ""
+            keyPassword project.findProperty("KEY_PWD") ?: ""
+            enableV1Signing true // 兼容旧版Android
+            enableV2Signing true // APK签名方案v2+
+            enableV3Signing true // 支持密钥轮换
+        }
+    } 
+*/
+
+    // 构建类型配置
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+            debuggable true
+            jniDebuggable true // 允许调试JNI代码
+            packagingOptions {
+                doNotStrip '**/*.so' // 保留原生库调试符号
+            }
+        }
+
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled true // 启用代码混淆
+            shrinkResources true // 移除未使用资源
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 
+                         'proguard-rules.pro',
+                         'proguard-qt.pro' // Qt专用规则
+            ndk {
+                debugSymbolLevel 'SYMBOL_TABLE' // 保留必要符号
+            }
+        }
+    }
+
+    // 产品风味配置（示例：区分开发和生产环境）
+    flavorDimensions "env"
+    productFlavors {
+        dev {
+            dimension "env"
+            applicationIdSuffix ".dev" // 包名追加.dev
+            resValue "string", "app_name", "ViewTools(Dev)"
+        }
+
+        prod {
+            dimension "env"
+            resValue "string", "app_name", "ViewTools"
+        }
+    }
+
+    // 外部原生构建配置
+    externalNativeBuild {
+        cmake {
+            path "CMakeLists.txt" // 主CMake配置文件路径
+            version "3.22.1" // 指定CMake版本
+        }
+    }
+
+    // 资源处理配置
+    aaptOptions {
+        cruncherEnabled = false // 禁用PNG压缩（Qt资源可能需要）
+        additionalParameters "--no-version-vectors" // 禁用矢量图版本检查
+    }
+
+    // Qt 默认已处理
+    // // 打包选项（解决.so文件冲突）
+    // packagingOptions {
+    //     jniLibs {
+    //         useLegacyPackaging true // 兼容旧版打包方式
+    //     }
+    //     // 排除冲突文件
+    //     excludes += ['META-INF/*.md', '**/libjni*.so']
+    //     // 选择第一个匹配的.so文件
+    //     pickFirsts += ['lib/*/libc++_shared.so', 'lib/*/libqtforandroid.so']
+    // }
+
+    // 现代Android特性
+    buildFeatures {
+        prefab true // 启用Prefab支持
+        viewBinding true // 启用视图绑定
+    }
+
+    // 编译选项
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+
+    kotlinOptions {
+        jvmTarget = '21' // Kotlin目标JVM版本
+    }
+
+    // 配置APK输出文件名（带版本和构建时间）
+    applicationVariants.all { variant ->
+        variant.outputs.all {
+            outputFileName = "ViewTools_${variant.versionName}_${variant.buildType.name}_${new Date().format('yyyyMMdd')}.apk"
+        }
+    }
+}
+
+// 依赖项配置
+dependencies {
+    // AndroidX基础库
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.multidex:multidex:2.0.1'
+
+    // Qt Android绑定（版本必须与Qt安装匹配）
+    implementation 'org.qtproject.qt.android:qt-android-bindings:6.8.3'
+    implementation 'org.qtproject.qt.android:qt-android-multimedia:6.8.3'
+
+    // 可选：ExoPlayer作为备用媒体引擎
+    implementation 'com.google.android.exoplayer:exoplayer-core:2.19.1'
+    implementation 'com.google.android.exoplayer:exoplayer-ui:2.19.1'
+
+    // 图片加载优化
+    implementation 'com.github.bumptech.glide:glide:4.16.0'
+    annotationProcessor 'com.github.bumptech.glide:compiler:4.16.0'
+}
+
+/* // Qt Creator 自动执行
+// 自定义任务：Qt库部署
+task deployQtLibs(type: Exec) {
+    workingDir "${project.projectDir}"
+    commandLine "${System.getenv('QT_HOST_PATH')}/bin/androiddeployqt",
+                '--input', 'android-viewtools_byQt-deployment-settings.json',
+                '--output', "${buildDir}/android",
+                '--gradle',
+                '--verbose'
+}
+
+// 构建钩子：在assembleRelease前执行Qt部署
+afterEvaluate {
+    assembleRelease.dependsOn deployQtLibs
+}
+
+// 签名验证任务
+task verifyReleaseSignature(type: Exec) {
+    commandLine "${android.sdkDirectory}/build-tools/${android.buildToolsVersion}/apksigner",
+            'verify',
+            '--verbose',
+            "${buildDir}/outputs/apk/release/*-release.apk"
+}
+*/
