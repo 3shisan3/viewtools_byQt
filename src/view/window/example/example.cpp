@@ -10,7 +10,7 @@
 #include "data/translation_manager.h"
 #include "event/event_dispatcher.h"
 #ifdef MEDIA_PLAYER_ENABLE
-#include "view/window/player/player_window.h"
+#include "player/player_window.h"
 #endif
 #include "view/component/joystick_wheel.h"
 #ifdef MAP_COMPONENT_ENABLE

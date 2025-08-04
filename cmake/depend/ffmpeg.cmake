@@ -1,5 +1,5 @@
 # FFmpeg 配置选项
-set(FFMPEG_VERSION "7.0.2" CACHE STRING "FFmpeg version to use")
+set(FFMPEG_CODE_VERSION "7.0.2" CACHE STRING "FFmpeg version to use")
 set(FFMPEG_SOURCE_BUILD OFF CACHE BOOL "Force build FFmpeg from source")
 set(FFMPEG_COMPONENTS avcodec avformat avutil swresample swscale)
 
@@ -53,7 +53,7 @@ endif()
 
 # 如果未找到系统 FFmpeg，则从源码构建
 if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
-    message(STATUS "Building FFmpeg ${FFMPEG_VERSION} from source")
+    message(STATUS "Building FFmpeg ${FFMPEG_CODE_VERSION} from source")
 
     # FFmpeg自定义安装路径
     set(FFMPEG_INSTALL_DIR "${3RD_DIR}/ffmpeg")
@@ -301,7 +301,7 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
         # 下载并构建 FFmpeg
         ExternalProject_Add(ffmpeg
             GIT_REPOSITORY "https://git.ffmpeg.org/ffmpeg.git"
-            GIT_TAG "n${FFMPEG_VERSION}"
+            GIT_TAG "n${FFMPEG_CODE_VERSION}"
             PREFIX "${CMAKE_BINARY_DIR}/ffmpeg-build"
             BUILD_ALWAYS OFF  # 避免不必要的重建
 

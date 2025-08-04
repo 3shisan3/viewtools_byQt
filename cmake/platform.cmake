@@ -13,7 +13,7 @@ if (ANDROID)
 
     qt_add_executable(${PROJECT_NAME}
         MANUAL_FINALIZATION
-        ${PROJECT_SRCS} ${QT_SRCS}
+        ${TARGET_SOURCES}
     )
 
     # 设置 Android 相关属性
