@@ -135,6 +135,7 @@ set_abi_config() {
             CROSS_PREFIX="aarch64-linux-android"
             TOOLCHAIN_PREFIX="aarch64-linux-android"
             EXTRA_CFLAGS="-march=armv8-a"
+            EXTRA_OPTIONS+=" --disable-x86asm"
             ;;
         x86)
             ARCH="i686"
@@ -149,6 +150,7 @@ set_abi_config() {
             CROSS_PREFIX="x86_64-linux-android"
             TOOLCHAIN_PREFIX="x86_64-linux-android"
             EXTRA_CFLAGS=""
+            EXTRA_OPTIONS+=" --enable-x86asm"
             ;;
         *)
             echo "[错误] 不支持的ABI: $ANDROID_ABI"
@@ -208,7 +210,6 @@ configure_ffmpeg() {
         --ranlib="$TOOLCHAIN_DIR/bin/llvm-ranlib"
         --extra-cflags="-fPIC -O3 $EXTRA_CFLAGS"
         --extra-ldflags="-fPIC -L$SYSROOT/usr/lib/$CROSS_PREFIX/$ANDROID_API_LEVEL"
-        --disable-x86asm
     )
 
     # 执行配置
