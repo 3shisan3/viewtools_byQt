@@ -55,9 +55,25 @@ endif()
 if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
     message(STATUS "Building FFmpeg ${FFMPEG_CODE_VERSION} from source")
 
-    # FFmpeg自定义安装路径
-    set(FFMPEG_INSTALL_DIR "${3RD_DIR}/ffmpeg")
-    file(TO_CMAKE_PATH "${FFMPEG_INSTALL_DIR}" FFMPEG_INSTALL_DIR) # 确保路径格式统一
+    # 根据平台定义子目录
+    if(ANDROID)
+        set(PLATFORM_SUBDIR "android/${ANDROID_ABI}")
+    elseif(WIN32)
+        if(MSVC)
+            set(PLATFORM_SUBDIR "windows/msvc")
+        else()
+            set(PLATFORM_SUBDIR "windows/mingw")
+        endif()
+    elseif(APPLE)
+        set(PLATFORM_SUBDIR "macos")
+    else()
+        set(PLATFORM_SUBDIR "linux/${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+
+    # FFmpeg自定义安装路径（按平台分离）
+    set(FFMPEG_INSTALL_DIR "${3RD_DIR}/ffmpeg/${PLATFORM_SUBDIR}")
+    file(MAKE_DIRECTORY "${FFMPEG_INSTALL_DIR}")
+    file(TO_CMAKE_PATH "${FFMPEG_INSTALL_DIR}" FFMPEG_INSTALL_DIR)
     message(STATUS "FFmpeg install path: ${FFMPEG_INSTALL_DIR}")
     
     # 检查是否已经安装过FFmpeg
@@ -88,8 +104,6 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
     if(FFMPEG_ALREADY_BUILT)
         message(STATUS "FFmpeg already built at ${FFMPEG_INSTALL_DIR}")
     else()
-        file(MAKE_DIRECTORY "${FFMPEG_INSTALL_DIR}")
-
         include(ExternalProject)
         include(ProcessorCount)
         ProcessorCount(NPROC)
@@ -141,6 +155,7 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
             --enable-shared
             --disable-programs
             --disable-doc
+            --prefix=${FFMPEG_INSTALL_DIR}
         )
 
         # 添加请求的组件
@@ -271,7 +286,7 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
         file(TO_CMAKE_PATH "${FFMPEG_INSTALL_DIR}" FFMPEG_INSTALL_DIR_FOR_CONFIGURE)
         string(REPLACE "\\" "/" FFMPEG_INSTALL_DIR_FOR_CONFIGURE "${FFMPEG_INSTALL_DIR_FOR_CONFIGURE}")
         string(REPLACE "\\" "/" FFMPEG_CONFIGURE_OPTIONS_STR "${FFMPEG_CONFIGURE_OPTIONS_STR}")
-        set(FFMPEG_CONFIGURE_OPTIONS_STR "--prefix=${FFMPEG_INSTALL_DIR_FOR_CONFIGURE} ${FFMPEG_CONFIGURE_OPTIONS_STR}")
+        set(FFMPEG_CONFIGURE_OPTIONS_STR "${FFMPEG_CONFIGURE_OPTIONS_STR}")
 
         if(WIN32)
             set(FFMPEG_PRE_CONFIGURE_COMMAND 
