@@ -46,6 +46,26 @@ SsMapGraphicsView::SsMapGraphicsView(QWidget *parent)
     // 默认算法
     setTileAlgorithm(TileForCoord::TileAlgorithmFactory::AlgorithmType::Standard);
 
+    // 初始化瓦片组和网格组
+    for (int level = 1; level <= m_maxZoomLevel; ++level)
+    {
+        QGraphicsItemGroup *tileGroup = new QGraphicsItemGroup();
+        m_scene->addItem(tileGroup);
+        tileGroup->setVisible(false);
+        m_tileGroups[level] = tileGroup;
+
+        QGraphicsItemGroup *gridGroup = new QGraphicsItemGroup();
+        m_scene->addItem(gridGroup);
+        gridGroup->setVisible(false);
+        m_gridGroups[level] = gridGroup;
+    }
+    m_currentTileGroup = m_tileGroups.value(m_zoomLevel);
+    m_currentGridGroup = m_gridGroups.value(m_zoomLevel);
+    if (m_currentTileGroup)
+        m_currentTileGroup->setVisible(true);
+    if (m_currentGridGroup && m_showGrid)
+        m_currentGridGroup->setVisible(true);
+
     // 启动瓦片加载线程
     m_tileLoader->start();
     // 连接信号槽(自动跨线程工作)
@@ -81,7 +101,7 @@ void SsMapGraphicsView::setZoomBehavior(bool zoomAtMousePosition)
 {
     m_zoomAtMousePos = zoomAtMousePosition;
     setMouseTracking(zoomAtMousePosition);
-};
+}
 
 /**
  * @brief 设置瓦片地图是否自动缓存到磁盘，及缓存父目录
@@ -134,6 +154,23 @@ void SsMapGraphicsView::clearLayers()
         layer->deleteLater();
     }
     m_layers.clear();
+    
+    // 清除瓦片和网格
+    for (auto it = m_tileGroups.begin(); it != m_tileGroups.end(); ++it) {
+        m_scene->removeItem(it.value());
+        delete it.value();
+    }
+    m_tileGroups.clear();
+    
+    for (auto it = m_gridGroups.begin(); it != m_gridGroups.end(); ++it) {
+        m_scene->removeItem(it.value());
+        delete it.value();
+    }
+    m_gridGroups.clear();
+    
+    m_currentTileGroup = nullptr;
+    m_currentGridGroup = nullptr;
+    
     update();
 }
 
@@ -159,10 +196,35 @@ void SsMapGraphicsView::setZoomLevel(double zoom)
 {
     if (m_zoomLevel != zoom)
     {
+        // 隐藏旧层级
+        if (m_currentTileGroup)
+            m_currentTileGroup->setVisible(false);
+        if (m_showGrid && m_currentGridGroup)
+            m_currentGridGroup->setVisible(false);
+        
         m_zoomLevel = qBound(1.0, zoom, m_maxZoomLevel);
         emit zoomLevelChange(m_zoomLevel);
 
-        updateViewport();
+        // 显示新层级
+        m_currentTileGroup = m_tileGroups.value(m_zoomLevel);
+        m_currentGridGroup = m_gridGroups.value(m_zoomLevel);
+        if (!m_currentTileGroup)
+        {
+            m_currentTileGroup = new QGraphicsItemGroup();
+            m_scene->addItem(m_currentTileGroup);
+            m_tileGroups[m_zoomLevel] = m_currentTileGroup;
+        }
+        if (m_showGrid && !m_currentGridGroup)
+        {
+            m_currentGridGroup = new QGraphicsItemGroup();
+            m_scene->addItem(m_currentGridGroup);
+            m_gridGroups[m_zoomLevel] = m_currentGridGroup;
+        }
+
+        m_currentTileGroup->setVisible(true);
+        m_currentGridGroup->setVisible(true);
+
+        // updateViewport();
     }
 }
 
@@ -171,10 +233,9 @@ void SsMapGraphicsView::setZoomLevel(double zoom)
  */
 void SsMapGraphicsView::zoomTo(const QGeoCoordinate &center, double zoom)
 {
-    m_center = center;
-    emit curCenterChange(center);
-
     setZoomLevel(zoom);
+
+    setCenter(center);
 }
 
 /**
@@ -216,12 +277,11 @@ void SsMapGraphicsView::wheelEvent(QWheelEvent *event)
         event->accept();
         return;
     }
-    emit zoomLevelChange(newZoom);
 
     // 计算缩放比例因子
     double scaleFactor = qPow(2.0, newZoom - m_zoomLevel);
     // 更新缩放级别
-    m_zoomLevel = newZoom;
+    setZoomLevel(newZoom);
 
     // ================= 基于鼠标位置缩放 =================
     if (m_zoomAtMousePos)
@@ -400,6 +460,7 @@ void SsMapGraphicsView::handlePinchGesture(QPinchGesture *gesture)
         break;
     case Qt::GestureUpdated:
         setZoomLevel(initialZoom * gesture->scaleFactor());
+        updateViewport();
         break;
     case Qt::GestureFinished:
         break;
@@ -530,8 +591,7 @@ void SsMapGraphicsView::loadTile(int x, int y, int z)
         if (!tile.isNull())
         {
             // 添加到场景
-            QGraphicsPixmapItem *item = m_scene->addPixmap(tile);
-            item->setPos(x * 256, y * 256);
+            addTileToScene(x, y, z, tile);
             return;
         }
     }
@@ -544,8 +604,7 @@ void SsMapGraphicsView::loadTile(int x, int y, int z)
         {
             // 添加到内存缓存和场景
             m_memoryCache.insert(x, y, z, tile);
-            QGraphicsPixmapItem *item = m_scene->addPixmap(tile);
-            item->setPos(x * 256, y * 256);
+            addTileToScene(x, y, z, tile);
             return;
         }
     }
@@ -557,6 +616,33 @@ void SsMapGraphicsView::loadTile(int x, int y, int z)
     }, Qt::QueuedConnection);
 }
 
+void SsMapGraphicsView::addTileToScene(int x, int y, int z, const QPixmap &tile)
+{
+    if (!m_tileGroups.contains(z))
+    {
+        QGraphicsItemGroup *tileGroup = new QGraphicsItemGroup();
+        m_scene->addItem(tileGroup);
+        tileGroup->setVisible(z == m_zoomLevel);
+        m_tileGroups[z] = tileGroup;
+
+        QGraphicsItemGroup *gridGroup = new QGraphicsItemGroup();
+        m_scene->addItem(gridGroup);
+        gridGroup->setVisible(z == m_zoomLevel);
+        m_gridGroups[z] = gridGroup;
+    }
+
+    QGraphicsPixmapItem *item = new QGraphicsPixmapItem(tile);
+    item->setPos(x * 256, y * 256);
+    m_tileGroups[z]->addToGroup(item);
+
+    if (m_showGrid)
+    {
+        QGraphicsRectItem *rectItem = new QGraphicsRectItem(x * 256, y * 256, 256, 256);
+        rectItem->setPen(QPen(Qt::gray));
+        m_gridGroups[z]->addToGroup(rectItem);
+    }
+}
+
 /**
  * @brief 处理瓦片加载完成
  */
@@ -566,18 +652,14 @@ void SsMapGraphicsView::handleTileReceived(int x, int y, int z, const QPixmap &t
     m_requestedTiles.remove(tileKey);
 
     if (tile.isNull())
-    {
         return;
-    }
 
     // 缓存瓦片
     m_memoryCache.insert(x, y, z, tile);
     if (m_autoSaveDisk)
         m_diskCache.saveTile(x, y, z, tile);
 
-    // 添加到场景
-    QGraphicsPixmapItem *item = m_scene->addPixmap(tile);
-    item->setPos(x * 256, y * 256);
+    addTileToScene(x, y, z, tile);
 }
 
 /**

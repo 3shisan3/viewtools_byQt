@@ -20,6 +20,7 @@ Version history
 #include <QGraphicsView>
 #include <QPinchGesture>  // 添加手势识别支持
 #include <QSet>
+#include <QHash>
 
 #include "view/widget/map/layers/route_layer.h"
 #include "view/widget/map/layers/ship_layer.h"
@@ -37,6 +38,7 @@ public:
     // 配置项操作
     void setZoomBehavior(bool zoomAtMousePosition);
     void setTileSaveDisk(bool toAutoSave, const QString &saveDir = "");
+    void setShowGrid(bool show) { m_showGrid = show; update(); }
 
     // 图层管理
     void addLayer(BaseLayer* layer);
@@ -94,6 +96,7 @@ private:
     // 视图更新
     void updateViewport();
     void requestVisibleTiles();
+    void addTileToScene(int x, int y, int z, const QPixmap& tile);
     
     // 瓦片管理
     void loadTile(int x, int y, int z);
@@ -101,10 +104,11 @@ private:
     // 图层渲染
     void renderLayers(QPainter* painter);
 
-    // 一些配置项
-    bool m_zoomAtMousePos;  // 地图缩放基于地图中心还是鼠标所在位置
-    bool m_autoSaveDisk;    // 是否自动存向磁盘
-    double m_maxZoomLevel;  // 地图最大放大比例
+    // 配置项
+    bool m_zoomAtMousePos;      // 地图缩放基于地图中心还是鼠标所在位置
+    bool m_autoSaveDisk;        // 是否自动存向磁盘
+    bool m_showGrid = false;    // 是否显示网格
+    double m_maxZoomLevel;      // 地图最大放大比例
 
     // 成员变量
     QGraphicsScene* m_scene;
@@ -120,12 +124,17 @@ private:
     SsMemoryCache m_memoryCache;
     SsDiskCacheManager m_diskCache;
     
+    // 层级管理
+    QHash<int, QGraphicsItemGroup*> m_tileGroups;  // 按层级存储瓦片组
+    QGraphicsItemGroup* m_currentTileGroup = nullptr;
+    QHash<int, QGraphicsItemGroup*> m_gridGroups;  // 按层级存储网格组
+    QGraphicsItemGroup* m_currentGridGroup = nullptr;
+    
     // 交互状态
     QPoint m_lastMousePos;
     QSet<QString> m_requestedTiles;
     bool m_isDragging = false;
     int m_activeTouchId = -1;  // 当前激活的触控点ID
 };
-
 
 #endif // SSMAP_GRAPHICSVIEW_H
