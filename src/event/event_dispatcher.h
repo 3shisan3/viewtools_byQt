@@ -23,7 +23,7 @@ Version history
  */
 class EventDispatcher : public QObject
 {
-Q_OBJECT
+    Q_OBJECT
 public:
     friend SingletonTemplate<EventDispatcher>;
     virtual ~EventDispatcher();

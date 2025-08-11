@@ -50,11 +50,18 @@ public:
 
     // 瓦片源配置
     void setTileAlgorithm(TileForCoord::TileAlgorithmFactory::AlgorithmType type);
-    void setTileUrlTemplate(const QString& urlTemplate, const QStringList& subdomains = QStringList());
+    void setTileUrlTemplate(const QString& urlTemplate, const QStringList& subdomains = QStringList(), double maxLevel = -1.0);
 
     // 获取当前状态
     QGeoCoordinate currentCenter() const;
     double zoomLevel() const { return m_zoomLevel; }
+
+signals:
+    void curCenterChange(QGeoCoordinate pos);
+    void zoomLevelChange(double level);
+    void tileUrlChange(QString urlTemplate, QStringList subdomains = QStringList(), double maxLevel = 18.0);
+    void tileDiskLocationChange(QString path);
+    // 当前未有图层筛选功能，后续有亦可添加对应信号
 
 protected:
     // 重写事件处理函数
@@ -96,6 +103,7 @@ private:
     // 一些配置项
     bool m_zoomAtMousePos;  // 地图缩放基于地图中心还是鼠标所在位置
     bool m_autoSaveDisk;    // 是否自动存向磁盘
+    double m_maxZoomLevel;  // 地图最大放大比例
 
     // 成员变量
     QGraphicsScene* m_scene;

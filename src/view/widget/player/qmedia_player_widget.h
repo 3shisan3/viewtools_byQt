@@ -28,7 +28,7 @@ public:
     ~SsQMediaPlayer();
 
     // 获取播放器核心类
-    PlayerWidgetBase * playerCore() const; 
+    PlayerWidgetBase * PlayerCore() const; 
 
 protected:
     // 信号转发关联

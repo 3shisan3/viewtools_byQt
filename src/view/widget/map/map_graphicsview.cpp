@@ -19,6 +19,7 @@
  */
 SsMapGraphicsView::SsMapGraphicsView(QWidget *parent)
     : QGraphicsView(parent)
+    , m_maxZoomLevel(22.0)
     , m_scene(new QGraphicsScene(this))
     , m_tileLoader(new SsOnlineTileLoader())  // 无父对象
     , m_diskCache(QCoreApplication::applicationDirPath() + "/map_tiles")
@@ -93,6 +94,7 @@ void SsMapGraphicsView::setTileSaveDisk(bool toAutoSave, const QString &saveDir)
     if (m_autoSaveDisk && !saveDir.isEmpty())
     {
         m_diskCache.setSaveDir(saveDir);
+        emit tileDiskLocationChange(saveDir);
     }
 }
 
@@ -143,6 +145,7 @@ void SsMapGraphicsView::setCenter(const QGeoCoordinate &center)
     if (m_center != center)
     {
         m_center = center;
+        emit curCenterChange(center);
 
         // 更新视图
         updateViewport();
@@ -156,7 +159,9 @@ void SsMapGraphicsView::setZoomLevel(double zoom)
 {
     if (m_zoomLevel != zoom)
     {
-        m_zoomLevel = qBound(1.0, zoom, 22.0);
+        m_zoomLevel = qBound(1.0, zoom, m_maxZoomLevel);
+        emit zoomLevelChange(m_zoomLevel);
+
         updateViewport();
     }
 }
@@ -167,6 +172,8 @@ void SsMapGraphicsView::setZoomLevel(double zoom)
 void SsMapGraphicsView::zoomTo(const QGeoCoordinate &center, double zoom)
 {
     m_center = center;
+    emit curCenterChange(center);
+
     setZoomLevel(zoom);
 }
 
@@ -182,9 +189,14 @@ void SsMapGraphicsView::setTileAlgorithm(TileForCoord::TileAlgorithmFactory::Alg
 /**
  * @brief 设置瓦片URL模板
  */
-void SsMapGraphicsView::setTileUrlTemplate(const QString &urlTemplate, const QStringList &subdomains)
+void SsMapGraphicsView::setTileUrlTemplate(const QString &urlTemplate, const QStringList &subdomains, double maxLevel)
 {
     m_tileLoader->setUrlTemplate(urlTemplate, subdomains);
+    if (maxLevel > 0)
+        m_maxZoomLevel = maxLevel;
+
+    emit tileUrlChange(urlTemplate, subdomains, m_maxZoomLevel);
+
     m_memoryCache.clear();
     updateViewport();
     update();
@@ -197,13 +209,14 @@ void SsMapGraphicsView::wheelEvent(QWheelEvent *event)
 {
     // 计算缩放级别变化
     double zoomDelta = event->angleDelta().y() > 0 ? 1 : -1;
-    double newZoom = qBound(1.0, m_zoomLevel + zoomDelta, 22.0);
+    double newZoom = qBound(1.0, m_zoomLevel + zoomDelta, m_maxZoomLevel);
 
     if (qFuzzyCompare(newZoom, m_zoomLevel))
     {
         event->accept();
         return;
     }
+    emit zoomLevelChange(newZoom);
 
     // 计算缩放比例因子
     double scaleFactor = qPow(2.0, newZoom - m_zoomLevel);

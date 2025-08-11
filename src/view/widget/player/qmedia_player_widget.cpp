@@ -22,10 +22,15 @@ SsQMediaPlayer::SsQMediaPlayer(QWidget *parent)
 
 SsQMediaPlayer::~SsQMediaPlayer()
 {
+    if (m_mediaPlayer_)
+    {
+        m_mediaPlayer_->stop();
+        m_mediaPlayer_->setVideoOutput(nullptr);
+    }
     // 资源通过Qt父子关系自动释放
 }
 
-PlayerWidgetBase * SsQMediaPlayer::playerCore() const
+PlayerWidgetBase * SsQMediaPlayer::PlayerCore() const
 {
     return m_playerCore_;
 }
