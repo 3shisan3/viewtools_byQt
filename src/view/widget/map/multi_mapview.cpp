@@ -164,32 +164,54 @@ void SsMultiMapView::addMeasurePoint(const QGeoCoordinate &point)
 
 void SsMultiMapView::updateMeasurePath()
 {
-    // 清除之前的路径和文本
-    if (m_measurePathItem)
-    {
-        scene()->removeItem(m_measurePathItem);
-        delete m_measurePathItem;
-    }
-
-    for (auto textItem : m_distanceTextItems)
-    {
-        scene()->removeItem(textItem);
-        delete textItem;
-    }
-    m_distanceTextItems.clear();
-
+    // 如果没有测量点或只有1个点，清除现有路径并返回
     if (m_measurePoints.size() < 2)
     {
-        m_measurePathItem = nullptr;
+        if (m_measurePathItem)
+        {
+            scene()->removeItem(m_measurePathItem);
+            delete m_measurePathItem;
+            m_measurePathItem = nullptr;
+        }
+        
+        for (auto textItem : m_distanceTextItems)
+        {
+            scene()->removeItem(textItem);
+            delete textItem;
+        }
+        m_distanceTextItems.clear();
         return;
     }
 
-    // 创建新的路径
+    // 创建或更新路径
     QPainterPath path;
     QPointF firstPoint = geoToPixel(m_measurePoints.first());
     path.moveTo(firstPoint);
 
-    // 绘制线段并计算每段距离
+    // 确保文本项数量与线段数量匹配
+    while (m_distanceTextItems.size() < m_measurePoints.size() - 1)
+    {
+        QGraphicsSimpleTextItem *textItem = new QGraphicsSimpleTextItem();
+        QFont font = textItem->font();
+        font.setBold(true);
+        font.setPointSize(10);
+        textItem->setFont(font);
+        textItem->setBrush(Qt::yellow);
+        textItem->setPen(QPen(Qt::black, 1));
+        textItem->setZValue(1000);
+        textItem->setFlags(QGraphicsItem::ItemIgnoresTransformations);
+        scene()->addItem(textItem);
+        m_distanceTextItems.append(textItem);
+    }
+    
+    while (m_distanceTextItems.size() > m_measurePoints.size() - 1)
+    {
+        auto textItem = m_distanceTextItems.takeLast();
+        scene()->removeItem(textItem);
+        delete textItem;
+    }
+
+    // 更新路径和文本项
     for (int i = 1; i < m_measurePoints.size(); ++i)
     {
         QPointF currentPoint = geoToPixel(m_measurePoints[i]);
@@ -199,25 +221,24 @@ void SsMultiMapView::updateMeasurePath()
         double distance = calculateSegmentDistance(m_measurePoints[i - 1], m_measurePoints[i]);
         QPointF midPoint = (firstPoint + currentPoint) / 2;
 
-        // 添加距离文本
-        QGraphicsSimpleTextItem *textItem = scene()->addSimpleText(formatDistance(distance));
-        QFont font = textItem->font();
-        font.setBold(true);
-        font.setPointSize(10);
-        textItem->setFont(font);
+        // 更新文本项
+        QGraphicsSimpleTextItem *textItem = m_distanceTextItems[i - 1];
+        textItem->setText(formatDistance(distance));
         textItem->setPos(midPoint);
-        textItem->setBrush(Qt::yellow);
-        textItem->setPen(QPen(Qt::black, 1));
-        textItem->setZValue(1000);
-        textItem->setFlags(QGraphicsItem::ItemIgnoresTransformations);
-        m_distanceTextItems.append(textItem);
-
+        
         firstPoint = currentPoint;
     }
 
-    // 添加路径到场景
-    m_measurePathItem = scene()->addPath(path, QPen(Qt::red, 3));
-    m_measurePathItem->setZValue(100);
+    // 更新或创建路径项
+    if (!m_measurePathItem)
+    {
+        m_measurePathItem = scene()->addPath(path, QPen(Qt::red, 3));
+        m_measurePathItem->setZValue(100);
+    }
+    else
+    {
+        m_measurePathItem->setPath(path);
+    }
 }
 
 void SsMultiMapView::updateTempLine(const QGeoCoordinate &endPoint)
