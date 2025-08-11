@@ -85,14 +85,15 @@ private slots:
     void handleTileFailed(int x, int y, int z, const QString& error);
     void handleLayerUpdateRequested();
 
+protected:
+    // 坐标转换
+    QPointF geoToPixel(const QGeoCoordinate& coord) const;
+    QGeoCoordinate pixelToGeo(const QPointF& pixel) const;
+
 private:
     // 视图更新
     void updateViewport();
     void requestVisibleTiles();
-    
-    // 坐标转换
-    QPointF geoToPixel(const QGeoCoordinate& coord) const;
-    QGeoCoordinate pixelToGeo(const QPointF& pixel) const;
     
     // 瓦片管理
     void loadTile(int x, int y, int z);

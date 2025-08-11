@@ -28,7 +28,7 @@ PlayerWindow::PlayerWindow(QWidget *parent, PlayerWidget type)
     case PlayerWidget::BY_QMEDIA:
     {
         m_playerWidget_ = new SsQMediaPlayer(this);
-        m_playerInstance_ = static_cast<SsQMediaPlayer *>(m_playerWidget_)->playerCore(); // 获取核心类
+        m_playerInstance_ = static_cast<SsQMediaPlayer *>(m_playerWidget_)->PlayerCore(); // 获取核心类
         // 设置窗口标题
         setWindowTitle(tr("Video Player By QMediaPlayer"));
     }
@@ -37,7 +37,7 @@ PlayerWindow::PlayerWindow(QWidget *parent, PlayerWidget type)
     case PlayerWidget::BY_FFMPEG:
     {
         m_playerWidget_ = new FFmpegPlayer(this);
-        m_playerInstance_ = static_cast<FFmpegPlayer *>(m_playerWidget_)->playerCore(); // 获取核心类
+        m_playerInstance_ = static_cast<FFmpegPlayer *>(m_playerWidget_)->PlayerCore(); // 获取核心类
         setWindowTitle(tr("Video Player By FFmpeg"));
     }
         break;

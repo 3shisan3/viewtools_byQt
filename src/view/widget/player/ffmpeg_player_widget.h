@@ -138,7 +138,7 @@ public:
     explicit FFmpegPlayer(QWidget *parent = nullptr);
     ~FFmpegPlayer();
 
-    PlayerWidgetBase *playerCore() const;
+    PlayerWidgetBase *PlayerCore() const;
     void stop();
 
 public slots:

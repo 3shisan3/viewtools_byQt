@@ -725,7 +725,7 @@ FFmpegPlayer::~FFmpegPlayer()
     }
 }
 
-PlayerWidgetBase *FFmpegPlayer::playerCore() const
+PlayerWidgetBase *FFmpegPlayer::PlayerCore() const
 {
     return m_playerCore_;
 }

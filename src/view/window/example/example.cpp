@@ -14,7 +14,7 @@
 #endif
 #include "view/component/joystick_wheel.h"
 #ifdef MAP_COMPONENT_ENABLE
-#include "view/widget/map/map_graphicsview.h"
+#include "view/widget/map/multi_mapview.h"
 #include "view/widget/map/layers/route_layer.h"
 #include "view/widget/map/layers/ship_layer.h"
 #ifdef USE_QML_LOCATION
@@ -150,7 +150,7 @@ void ExampleWindow::extraFeatures()
         QVBoxLayout *layout = new QVBoxLayout(mapDialog);
         
         // 创建地图组件
-        SsMapGraphicsView *mapComponent = new SsMapGraphicsView(mapDialog);
+        SsMultiMapView *mapComponent = new SsMultiMapView(mapDialog);
         layout->addWidget(mapComponent);
 
         // mapComponent->setTileUrlTemplate("https://webst02.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}");
