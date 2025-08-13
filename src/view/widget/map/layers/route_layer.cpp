@@ -40,6 +40,7 @@ void RouteLayer::render(QPainter *painter,
 
     // 1. 绘制航线
     QPen linePen(m_lineColor, m_lineWidth);
+    linePen.setStyle(m_lineStyle);
     linePen.setCapStyle(Qt::RoundCap);
     linePen.setJoinStyle(Qt::RoundJoin);
     painter->setPen(linePen);

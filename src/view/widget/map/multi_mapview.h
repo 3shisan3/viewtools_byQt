@@ -25,8 +25,12 @@ public:
     explicit SsMultiMapView(QWidget *parent = nullptr);
     ~SsMultiMapView() override;
 
-    bool isMeasuring() const;
-    bool isRouting() const;
+    // 状态查询
+    bool isMeasuring() const { return m_measureState != MeasureNone; }
+    bool isRouting() const { return m_routeState != RouteNone; }
+
+    // 路线样式设置
+    void setRouteStyle(const QColor &color, int width, Qt::PenStyle style = Qt::SolidLine);
 
 public slots:
     // 测距控制
@@ -36,6 +40,8 @@ public slots:
     // 路线规划控制
     void startRoutePlanning();
     void cancelRoutePlanning();
+    void finishRoutePlanning();
+    void exitRoutePlanning();
 
 signals:
     // 测距相关信号
@@ -46,15 +52,15 @@ signals:
     // 路线规划相关信号
     void routePlanningStarted();
     void routePlanningCanceled();
-    void routePlanningCompleted(const QList<QGeoCoordinate>& route);
-    
+    void routePlanningFinished(const QVector<QGeoCoordinate> &route);
+    void routePlanningExited();
+
 protected:
     // 事件处理
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
-    void paintEvent(QPaintEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
 
 private:
@@ -82,25 +88,23 @@ private:
     
     // 路线规划相关
     RouteState m_routeState;
-    QList<QGeoCoordinate> m_routePoints;
-    QGraphicsPathItem *m_routePathItem;
+    RouteLayer *m_routeLayer;
     QGraphicsLineItem *m_tempRouteLineItem;
 
     // 辅助方法
     void updateMeasurePath();
-    void updateRoutePath();
+    void updateTempLine(const QGeoCoordinate &endPoint);
+    void addMeasurePoint(const QGeoCoordinate &point);
+    void endDistanceMeasurement();
     void clearMeasurement();
+    void refreshMeasurementDisplay();
+    
+    void updateTempRouteLine(const QGeoCoordinate &endPoint);
+    void addRoutePoint(const QGeoCoordinate &point);
     void clearRoute();
+    
     double calculateSegmentDistance(const QGeoCoordinate &p1, const QGeoCoordinate &p2) const;
     QString formatDistance(double meters) const;
-    void updateTempLine(const QGeoCoordinate &endPoint);
-    void updateTempRouteLine(const QGeoCoordinate &endPoint);
-    void addMeasurePoint(const QGeoCoordinate &point);
-    void addRoutePoint(const QGeoCoordinate &point);
-    void endDistanceMeasurement();
-    void endRoutePlanning();
-    void refreshMeasurementDisplay();
-    void refreshRouteDisplay();
 };
 
-#endif  // SSMULTI_MAPVIEW_H
+#endif // SSMULTI_MAPVIEW_H

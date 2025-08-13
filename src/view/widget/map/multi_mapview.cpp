@@ -6,12 +6,16 @@
 SsMultiMapView::SsMultiMapView(QWidget *parent)
     : SsMapGraphicsView(parent)
     , m_measureState(MeasureNone)
-    , m_routeState(RouteNone)
     , m_measurePathItem(nullptr)
     , m_tempLineItem(nullptr)
     , m_tempDistanceText(nullptr)
-    , m_routePathItem(nullptr)
+    , m_routeState(RouteNone)
+    , m_tempRouteLineItem(nullptr)
 {
+    // 初始化路线图层
+    m_routeLayer = new RouteLayer(this);
+    addLayer(m_routeLayer);
+    m_routeLayer->setVisible(false);
 }
 
 SsMultiMapView::~SsMultiMapView()
@@ -20,20 +24,19 @@ SsMultiMapView::~SsMultiMapView()
     clearRoute();
 }
 
-bool SsMultiMapView::isMeasuring() const
+void SsMultiMapView::setRouteStyle(const QColor &color, int width, Qt::PenStyle style)
 {
-    return m_measureState != MeasureNone;
+    if (m_routeLayer)
+    {
+        m_routeLayer->setLineColor(color);
+        m_routeLayer->setLineWidth(width);
+        m_routeLayer->setLineStyle(style);
+    }
 }
 
-bool SsMultiMapView::isRouting() const
-{
-    return m_routeState != RouteNone;
-}
-
+// ================= 测距功能 =================
 void SsMultiMapView::startDistanceMeasurement()
 {
-    if (isRouting()) return;
-    
     clearMeasurement();
     m_measureState = MeasureStartPoint;
     setCursor(Qt::CrossCursor);
@@ -47,12 +50,16 @@ void SsMultiMapView::cancelDistanceMeasurement()
     emit measurementCanceled();
 }
 
+// ================= 路线规划功能 =================
 void SsMultiMapView::startRoutePlanning()
 {
-    if (isMeasuring()) return;
-    
+    // 开始规划时，默认退出测量状态
+    if (isMeasuring())
+        cancelDistanceMeasurement();
+
     clearRoute();
     m_routeState = RouteStartPoint;
+    m_routeLayer->setVisible(true);
     setCursor(Qt::CrossCursor);
     emit routePlanningStarted();
 }
@@ -60,24 +67,37 @@ void SsMultiMapView::startRoutePlanning()
 void SsMultiMapView::cancelRoutePlanning()
 {
     clearRoute();
-    setCursor(Qt::ArrowCursor);
+    m_routeState = RouteStartPoint;
+    setCursor(Qt::CrossCursor);
     emit routePlanningCanceled();
 }
 
-void SsMultiMapView::wheelEvent(QWheelEvent *event)
+void SsMultiMapView::finishRoutePlanning()
 {
-    SsMapGraphicsView::wheelEvent(event);
-    refreshMeasurementDisplay();
-    refreshRouteDisplay();
+    if (m_routeState != RouteNone && !m_routeLayer->route().isEmpty())
+    {
+        m_routeState = RouteEndPoint;
+        setCursor(Qt::ArrowCursor);
+        emit routePlanningFinished(m_routeLayer->route());
+    }
 }
 
+void SsMultiMapView::exitRoutePlanning()
+{
+    clearRoute();
+    m_routeState = RouteNone;
+    m_routeLayer->setVisible(false);
+    setCursor(Qt::ArrowCursor);
+    emit routePlanningExited();
+}
+
+// ================= 事件处理 =================
 void SsMultiMapView::mousePressEvent(QMouseEvent *event)
 {
     // 处理测距模式下的点击
     if (m_measureState != MeasureNone && event->button() == Qt::LeftButton)
     {
-        QPointF scenePos = mapToScene(event->pos());
-        QGeoCoordinate coord = pixelToGeo(scenePos);
+        QGeoCoordinate coord = pixelToGeo(mapToScene(event->pos()));
 
         if (m_measureState == MeasureStartPoint)
         {
@@ -88,32 +108,25 @@ void SsMultiMapView::mousePressEvent(QMouseEvent *event)
         {
             addMeasurePoint(coord);
         }
-
-        event->accept();
-        return;
     }
-    
+
     // 处理路线规划模式下的点击
-    if (m_routeState != RouteNone && event->button() == Qt::LeftButton)
+    if (m_routeState != RouteNone && event->button() == Qt::LeftButton &&
+        m_measureState == MeasureNone)
     {
-        QPointF scenePos = mapToScene(event->pos());
-        QGeoCoordinate coord = pixelToGeo(scenePos);
+        QGeoCoordinate coord = pixelToGeo(mapToScene(event->pos()));
 
         if (m_routeState == RouteStartPoint)
         {
-            addRoutePoint(coord);
+            m_routeLayer->setRoute({coord});
             m_routeState = RouteMiddlePoints;
         }
         else if (m_routeState == RouteMiddlePoints)
         {
             addRoutePoint(coord);
         }
-
-        event->accept();
-        return;
     }
 
-    // 非测距/路线规划模式下的处理交给父类
     SsMapGraphicsView::mousePressEvent(event);
 }
 
@@ -122,17 +135,14 @@ void SsMultiMapView::mouseMoveEvent(QMouseEvent *event)
     // 在测距模式下更新临时线
     if (m_measureState == MeasureMiddlePoints && !m_measurePoints.isEmpty())
     {
-        QPointF scenePos = mapToScene(event->pos());
-        QGeoCoordinate coord = pixelToGeo(scenePos);
-        updateTempLine(coord);
+        updateTempLine(pixelToGeo(mapToScene(event->pos())));
     }
-    
+
     // 在路线规划模式下更新临时线
-    if (m_routeState == RouteMiddlePoints && !m_routePoints.isEmpty())
+    if (m_routeState == RouteMiddlePoints && !m_routeLayer->route().isEmpty() &&
+        m_measureState == MeasureNone)
     {
-        QPointF scenePos = mapToScene(event->pos());
-        QGeoCoordinate coord = pixelToGeo(scenePos);
-        updateTempRouteLine(coord);
+        updateTempRouteLine(pixelToGeo(mapToScene(event->pos())));
     }
 
     SsMapGraphicsView::mouseMoveEvent(event);
@@ -155,10 +165,8 @@ void SsMultiMapView::mouseDoubleClickEvent(QMouseEvent *event)
     // 路线规划模式下双击结束规划
     if (m_routeState != RouteNone && event->button() == Qt::LeftButton)
     {
-        if (m_routeState == RouteMiddlePoints && !m_routePoints.isEmpty())
-            endRoutePlanning();
-        else if (m_routeState == RouteEndPoint)
-            cancelRoutePlanning();
+        if (m_routeState == RouteMiddlePoints && !m_routeLayer->route().isEmpty())
+            finishRoutePlanning();
         
         event->accept();
         return;
@@ -173,69 +181,47 @@ void SsMultiMapView::contextMenuEvent(QContextMenuEvent *event)
 
     if (m_measureState != MeasureNone)
     {
-        QAction *cancelAction = menu.addAction(tr("Cancel Measurement"));
+        QAction *cancelAction = menu.addAction(tr("取消测距"));
         connect(cancelAction, &QAction::triggered, this, &SsMultiMapView::cancelDistanceMeasurement);
+
+        QAction *routeAction = menu.addAction(tr("路线规划"));
+        connect(routeAction, &QAction::triggered, this, &SsMultiMapView::startRoutePlanning);
     }
     else if (m_routeState != RouteNone)
     {
-        QAction *cancelAction = menu.addAction(tr("Cancel Route Planning"));
+        if (m_routeState == RouteMiddlePoints && !m_routeLayer->route().isEmpty())
+        {
+            QAction *finishAction = menu.addAction(tr("完成规划"));
+            connect(finishAction, &QAction::triggered, this, &SsMultiMapView::finishRoutePlanning);
+        }
+
+        QAction *cancelAction = menu.addAction(tr("取消规划"));
         connect(cancelAction, &QAction::triggered, this, &SsMultiMapView::cancelRoutePlanning);
+
+        QAction *exitAction = menu.addAction(tr("退出规划"));
+        connect(exitAction, &QAction::triggered, this, &SsMultiMapView::exitRoutePlanning);
+
+        QAction *measureAction = menu.addAction(tr("距离测量"));
+        connect(measureAction, &QAction::triggered, this, &SsMultiMapView::startDistanceMeasurement);
     }
     else
     {
-        QAction *measureAction = menu.addAction(tr("Distance Measurement"));
+        QAction *measureAction = menu.addAction(tr("距离测量"));
         connect(measureAction, &QAction::triggered, this, &SsMultiMapView::startDistanceMeasurement);
-        
-        QAction *routeAction = menu.addAction(tr("Route Planning"));
+
+        QAction *routeAction = menu.addAction(tr("路线规划"));
         connect(routeAction, &QAction::triggered, this, &SsMultiMapView::startRoutePlanning);
     }
 
     menu.exec(event->globalPos());
 }
 
-void SsMultiMapView::paintEvent(QPaintEvent *event)
-{
-    SsMapGraphicsView::paintEvent(event);
-
-    // 在测距模式下绘制额外的图形
-    if (m_measureState != MeasureNone)
-    {
-        QPainter painter(viewport());
-        painter.setRenderHint(QPainter::Antialiasing);
-
-        // 绘制测量点标记
-        for (const auto &point : m_measurePoints)
-        {
-            QPointF pixelPos = geoToPixel(point);
-            painter.setPen(QPen(Qt::red, 3));
-            painter.setBrush(Qt::white);
-            painter.drawEllipse(pixelPos, 6, 6);
-        }
-    }
-    
-    // 在路线规划模式下绘制额外的图形
-    if (m_routeState != RouteNone)
-    {
-        QPainter painter(viewport());
-        painter.setRenderHint(QPainter::Antialiasing);
-
-        // 绘制路线点标记
-        for (const auto &point : m_routePoints)
-        {
-            QPointF pixelPos = geoToPixel(point);
-            painter.setPen(QPen(Qt::blue, 3));
-            painter.setBrush(Qt::white);
-            painter.drawEllipse(pixelPos, 6, 6);
-        }
-    }
-}
-
+// ================= 测距辅助方法 =================
 void SsMultiMapView::addMeasurePoint(const QGeoCoordinate &point)
 {
     m_measurePoints.append(point);
     updateMeasurePath();
 
-    // 清除临时线
     if (m_tempLineItem)
     {
         scene()->removeItem(m_tempLineItem);
@@ -247,20 +233,6 @@ void SsMultiMapView::addMeasurePoint(const QGeoCoordinate &point)
         scene()->removeItem(m_tempDistanceText);
         delete m_tempDistanceText;
         m_tempDistanceText = nullptr;
-    }
-}
-
-void SsMultiMapView::addRoutePoint(const QGeoCoordinate &point)
-{
-    m_routePoints.append(point);
-    updateRoutePath();
-
-    // 清除临时线
-    if (m_tempRouteLineItem)
-    {
-        scene()->removeItem(m_tempRouteLineItem);
-        delete m_tempRouteLineItem;
-        m_tempRouteLineItem = nullptr;
     }
 }
 
@@ -305,7 +277,7 @@ void SsMultiMapView::updateMeasurePath()
         scene()->addItem(textItem);
         m_distanceTextItems.append(textItem);
     }
-    
+
     while (m_distanceTextItems.size() > m_measurePoints.size() - 1)
     {
         auto textItem = m_distanceTextItems.takeLast();
@@ -324,10 +296,8 @@ void SsMultiMapView::updateMeasurePath()
         QPointF midPoint = (firstPoint + currentPoint) / 2;
 
         // 更新文本项
-        QGraphicsSimpleTextItem *textItem = m_distanceTextItems[i - 1];
-        textItem->setText(formatDistance(distance));
-        textItem->setPos(midPoint);
-        
+        m_distanceTextItems[i - 1]->setText(formatDistance(distance));
+        m_distanceTextItems[i - 1]->setPos(midPoint);
         firstPoint = currentPoint;
     }
 
@@ -343,50 +313,8 @@ void SsMultiMapView::updateMeasurePath()
     }
 }
 
-void SsMultiMapView::updateRoutePath()
-{
-    // 如果没有路线点或只有1个点，清除现有路径并返回
-    if (m_routePoints.size() < 2)
-    {
-        if (m_routePathItem)
-        {
-            scene()->removeItem(m_routePathItem);
-            delete m_routePathItem;
-            m_routePathItem = nullptr;
-        }
-        return;
-    }
-
-    // 创建或更新路径
-    QPainterPath path;
-    QPointF firstPoint = geoToPixel(m_routePoints.first());
-    path.moveTo(firstPoint);
-
-    // 更新路径
-    for (int i = 1; i < m_routePoints.size(); ++i)
-    {
-        QPointF currentPoint = geoToPixel(m_routePoints[i]);
-        path.lineTo(currentPoint);
-        firstPoint = currentPoint;
-    }
-
-    // 更新或创建路径项
-    if (!m_routePathItem)
-    {
-        m_routePathItem = scene()->addPath(path, QPen(Qt::blue, 3, Qt::DashLine));
-        m_routePathItem->setZValue(100);
-    }
-    else
-    {
-        m_routePathItem->setPath(path);
-    }
-}
-
 void SsMultiMapView::updateTempLine(const QGeoCoordinate &endPoint)
 {
-    if (m_measurePoints.isEmpty())
-        return;
-
     // 创建或更新临时线
     QPointF startPixel = geoToPixel(m_measurePoints.last());
     QPointF endPixel = geoToPixel(endPoint);
@@ -402,7 +330,7 @@ void SsMultiMapView::updateTempLine(const QGeoCoordinate &endPoint)
         m_tempLineItem->setLine(QLineF(startPixel, endPixel));
     }
 
-    // 计算并显示临时距离
+    // 计算并显示距离
     double distance = calculateSegmentDistance(m_measurePoints.last(), endPoint);
     QPointF midPoint = (startPixel + endPixel) / 2;
 
@@ -426,27 +354,6 @@ void SsMultiMapView::updateTempLine(const QGeoCoordinate &endPoint)
     }
 }
 
-void SsMultiMapView::updateTempRouteLine(const QGeoCoordinate &endPoint)
-{
-    if (m_routePoints.isEmpty())
-        return;
-
-    // 创建或更新临时线
-    QPointF startPixel = geoToPixel(m_routePoints.last());
-    QPointF endPixel = geoToPixel(endPoint);
-
-    if (!m_tempRouteLineItem)
-    {
-        m_tempRouteLineItem = scene()->addLine(QLineF(startPixel, endPixel),
-                                             QPen(Qt::blue, 2, Qt::DashLine));
-        m_tempRouteLineItem->setZValue(100);
-    }
-    else
-    {
-        m_tempRouteLineItem->setLine(QLineF(startPixel, endPixel));
-    }
-}
-
 void SsMultiMapView::endDistanceMeasurement()
 {
     double totalDistance = 0.0;
@@ -454,26 +361,8 @@ void SsMultiMapView::endDistanceMeasurement()
     {
         totalDistance += calculateSegmentDistance(m_measurePoints[i - 1], m_measurePoints[i]);
     }
-
-    qDebug() << "Measurement completed. Total distance:" << totalDistance << "meters";
     emit measurementCompleted(totalDistance, m_measurePoints);
-
     m_measureState = MeasureEndPoint;
-    setCursor(Qt::ArrowCursor);
-}
-
-void SsMultiMapView::endRoutePlanning()
-{
-    if (m_routePoints.size() < 2)
-    {
-        cancelRoutePlanning();
-        return;
-    }
-
-    qDebug() << "Route planning completed with" << m_routePoints.size() << "points";
-    emit routePlanningCompleted(m_routePoints);
-
-    m_routeState = RouteEndPoint;
     setCursor(Qt::ArrowCursor);
 }
 
@@ -511,17 +400,12 @@ void SsMultiMapView::clearMeasurement()
     }
 }
 
-void SsMultiMapView::clearRoute()
+// ================= 路线规划辅助方法 =================
+void SsMultiMapView::addRoutePoint(const QGeoCoordinate &point)
 {
-    m_routePoints.clear();
-    m_routeState = RouteNone;
-
-    if (m_routePathItem)
-    {
-        scene()->removeItem(m_routePathItem);
-        delete m_routePathItem;
-        m_routePathItem = nullptr;
-    }
+    QVector<QGeoCoordinate> route = m_routeLayer->route();
+    route.append(point);
+    m_routeLayer->setRoute(route);
 
     if (m_tempRouteLineItem)
     {
@@ -529,6 +413,60 @@ void SsMultiMapView::clearRoute()
         delete m_tempRouteLineItem;
         m_tempRouteLineItem = nullptr;
     }
+}
+
+void SsMultiMapView::updateTempRouteLine(const QGeoCoordinate &endPoint)
+{
+    if (m_routeLayer->route().isEmpty())
+        return;
+
+    QPointF startPixel = geoToPixel(m_routeLayer->route().last());
+    QPointF endPixel = geoToPixel(endPoint);
+
+    if (!m_tempRouteLineItem)
+    {
+        m_tempRouteLineItem = scene()->addLine(QLineF(startPixel, endPixel),
+                                               QPen(Qt::blue, 2, Qt::DashLine));
+        m_tempRouteLineItem->setZValue(100);
+    }
+    else
+    {
+        m_tempRouteLineItem->setLine(QLineF(startPixel, endPixel));
+    }
+}
+
+void SsMultiMapView::clearRoute()
+{
+    m_routeLayer->clearRoute();
+
+    if (m_tempRouteLineItem)
+    {
+        scene()->removeItem(m_tempRouteLineItem);
+        delete m_tempRouteLineItem;
+        m_tempRouteLineItem = nullptr;
+    }
+
+    viewport()->update();
+}
+
+// ================= 通用工具方法 =================
+double SsMultiMapView::calculateSegmentDistance(const QGeoCoordinate &p1, const QGeoCoordinate &p2) const
+{
+    return p1.distanceTo(p2);
+}
+
+QString SsMultiMapView::formatDistance(double meters) const
+{
+    if(meters < 1000)
+        return QString("%1 m").arg(qRound(meters));
+    else
+        return QString("%1 km").arg(meters / 1000, 0, 'f', 2);
+}
+
+void SsMultiMapView::wheelEvent(QWheelEvent *event)
+{
+    SsMapGraphicsView::wheelEvent(event);
+    refreshMeasurementDisplay();
 }
 
 void SsMultiMapView::refreshMeasurementDisplay()
@@ -542,30 +480,4 @@ void SsMultiMapView::refreshMeasurementDisplay()
             updateTempLine(pixelToGeo(endPos));
         }
     }
-}
-
-void SsMultiMapView::refreshRouteDisplay()
-{
-    if (m_routeState != RouteNone && !m_routePoints.isEmpty())
-    {
-        updateRoutePath();
-        if (m_tempRouteLineItem)
-        {
-            QPointF endPos = mapToScene(viewport()->mapFromGlobal(QCursor::pos()));
-            updateTempRouteLine(pixelToGeo(endPos));
-        }
-    }
-}
-
-double SsMultiMapView::calculateSegmentDistance(const QGeoCoordinate &p1, const QGeoCoordinate &p2) const
-{
-    return p1.distanceTo(p2);
-}
-
-QString SsMultiMapView::formatDistance(double meters) const
-{
-    if (meters < 1000)
-        return QString("%1 m").arg(qRound(meters));
-    else
-        return QString("%1 km").arg(meters / 1000, 0, 'f', 2);
 }
