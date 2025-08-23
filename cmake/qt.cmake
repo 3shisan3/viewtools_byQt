@@ -1,5 +1,5 @@
 # 设置默认的 Qt 目录
-set(QT_PREFIX_PATH "C:\\Dev\\Qt\\6.8.3\\mingw_64" CACHE PATH "Default Qt install path")
+set(QT_PREFIX_PATH "/home/shisan/dev/Qt/6.8.3/gcc_64" CACHE PATH "Default Qt install path")
 
 # 检查路径是否存在
 if(NOT EXISTS ${QT_PREFIX_PATH})
@@ -21,7 +21,7 @@ else()
         message(STATUS "Using Qt5")
         set(QT_VERSION 5)
     else()
-        message(FATAL_ERROR "Neither Qt5 nor Qt6 found. Please install Qt5 or Qt6.")
+        message(FATAL_ERROR "path: ${QT_PREFIX_PATH} Neither Qt5 nor Qt6 found. Please install Qt5 or Qt6.")
     endif()
 endif()
 

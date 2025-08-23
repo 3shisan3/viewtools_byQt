@@ -268,17 +268,24 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
                 --extra-ldflags=-L${ANDROID_SYSROOT}/usr/lib/${FFMPEG_CROSS_PREFIX}/${ANDROID_API_LEVEL}
             )
         else() # Linux/Unix
+            # 添加对NASM/YASM的检测
+            find_program(NASM_EXECUTABLE nasm)
+            find_program(YASM_EXECUTABLE yasm)
+            if(NASM_EXECUTABLE)
+                message(STATUS "Found nasm: ${NASM_EXECUTABLE}")
+                list(APPEND FFMPEG_CONFIGURE_OPTIONS --enable-nasm)
+            elseif(YASM_EXECUTABLE)
+                message(STATUS "Found yasm: ${YASM_EXECUTABLE}")
+                list(APPEND FFMPEG_CONFIGURE_OPTIONS --enable-yasm)
+            else()
+                message(WARNING "Neither nasm nor yasm found, disabling assembly optimizations")
+                list(APPEND FFMPEG_CONFIGURE_OPTIONS --disable-x86asm)
+            endif()
+
             list(APPEND FFMPEG_CONFIGURE_OPTIONS
                 --extra-cflags=-fPIC
                 --extra-ldflags=-fPIC
             )
-            # 检查汇编器
-            find_program(NASM_EXE nasm)
-            if(NASM_EXE)
-                list(APPEND FFMPEG_CONFIGURE_OPTIONS --enable-nasm)
-            else()
-                message(WARNING "nasm not found, assembly optimizations will be disabled")
-            endif()
         endif()
 
         # 将配置选项列表转换为字符串

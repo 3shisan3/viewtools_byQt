@@ -87,11 +87,12 @@ elseif(UNIX AND NOT APPLE AND NOT ANDROID)
     # Linux 平台使用 linuxdeployqt 或手动处理
     # 自动获取工具路径
     execute_process(
-        COMMAND bash "${CMAKE_SOURCE_DIR}/script/tools/check_linuxdeployqt.sh" "auto"
+        COMMAND bash "${CMAKE_SOURCE_DIR}/script/tools/check_linuxdeployqt.sh" "prebuilt"
         OUTPUT_VARIABLE DEPLOYQT_PATH
         OUTPUT_STRIP_TRAILING_WHITESPACE
         RESULT_VARIABLE INSTALL_RESULT
     )
+    message(STATUS "DEPLOYQT_PATH: ${DEPLOYQT_PATH}")
     if(INSTALL_RESULT EQUAL 0 AND EXISTS "${DEPLOYQT_PATH}")
         add_custom_target(deploy
             COMMAND "${DEPLOYQT_PATH}"
