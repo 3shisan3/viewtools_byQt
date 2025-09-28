@@ -1,5 +1,3 @@
 windows下 需注意主要几点
 1、mingw构建环境需依赖msys2部署的mingw，单纯使用qt内置的mingw构建组件会存在换行符问题，
  如果想只使用qt内置的mingw构建组件需要单独处理
-2、msvc构建环境，需配合qt和msys2部署的内容一致性，qt使用MSVC编译生成库，同时还msys2使用UCRT64​版本
- 同理mingw的情况一致，qt使用MinGW编译生成库，同时还msys2使用MINGW64​​版本
