@@ -75,7 +75,10 @@ void ExampleWindow::showQssWindow()
 
     // 加载QSS样式
     QFile styleFile(":/ui/style_sheet/example.qss");
-    styleFile.open(QFile::ReadOnly);
+    if (!styleFile.open(QFile::ReadOnly))
+    {
+        return;  // 可错误处理逻辑
+    }
     QString styleSheet = QLatin1String(styleFile.readAll());
     qssWindow->setStyleSheet(styleSheet);
 

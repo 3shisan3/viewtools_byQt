@@ -76,7 +76,6 @@ if(WIN32)
 
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E echo "Starting Qt deployment..."
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/bin"
         COMMAND ${QT_PREFIX_PATH}/bin/windeployqt.exe 
             --qmldir ${CMAKE_CURRENT_SOURCE_DIR}/ui/qml 
             "${EXECUTABLE_OUTPUT_PATH}/${PROJECT_NAME}.exe" > NUL 2>&1

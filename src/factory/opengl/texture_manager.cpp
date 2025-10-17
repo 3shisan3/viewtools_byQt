@@ -26,7 +26,11 @@ QOpenGLTexture *TextureManager::loadTexture(const QString &path, const QString &
 QOpenGLTexture *TextureManager::createTexture(const QImage &image, const QString &textureName)
 {
     // 创建 QOpenGLTexture 对象（自动处理 OpenGL 初始化）
+#if QT_VERSION_MAJOR < 6
     QOpenGLTexture *texture = new QOpenGLTexture(image.mirrored());
+#else
+    QOpenGLTexture *texture = new QOpenGLTexture(image.flipped(Qt::Vertical));
+#endif
     texture->setMinMagFilters(QOpenGLTexture::LinearMipMapLinear, QOpenGLTexture::Linear);
     texture->setWrapMode(QOpenGLTexture::Repeat);
     texture->generateMipMaps();

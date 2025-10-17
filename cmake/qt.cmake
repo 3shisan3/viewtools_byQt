@@ -1,13 +1,16 @@
-# 设置默认的 Qt 目录
-set(QT_PREFIX_PATH "/home/shisan/dev/Qt/6.8.3/gcc_64" CACHE PATH "Default Qt install path")
+# 设置默认Qt安装路径
+set(QT_PREFIX_PATH "" CACHE PATH "Default Qt install path")
 
-# 检查路径是否存在
-if(NOT EXISTS ${QT_PREFIX_PATH})
-    message(FATAL_ERROR "QT_PREFIX_PATH: ${QT_PREFIX_PATH} does not exist.")
+# 检查路径是否存在（仅在路径不为空时检查）
+if(QT_PREFIX_PATH)
+    if(NOT EXISTS ${QT_PREFIX_PATH})
+        message(FATAL_ERROR "QT_PREFIX_PATH: '${QT_PREFIX_PATH}' does not exist.")
+    endif()
 endif()
 
 # 将 Qt 路径添加到搜索目录中
 list(APPEND CMAKE_PREFIX_PATH ${QT_PREFIX_PATH})
+message(STATUS "CMAKE_PREFIX_PATH: ${CMAKE_PREFIX_PATH}")
 
 # 尝试查找 Qt6
 find_package(Qt6 QUIET COMPONENTS Core Gui Widgets)

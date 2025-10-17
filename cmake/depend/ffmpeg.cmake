@@ -1,6 +1,6 @@
 # FFmpeg 配置选项
 set(FFMPEG_CODE_VERSION "7.0.2" CACHE STRING "FFmpeg version to use")
-set(FFMPEG_SOURCE_BUILD OFF CACHE BOOL "Force build FFmpeg from source")
+set(FFMPEG_SOURCE_BUILD ON CACHE BOOL "Force build FFmpeg from source")
 set(FFMPEG_COMPONENTS avcodec avformat avutil swresample swscale)
 
 # 尝试查找系统安装的 FFmpeg
@@ -16,7 +16,7 @@ if(NOT FFMPEG_SOURCE_BUILD)
         )
     endif()
 
-    if(FFMPEG_PKG_FOUND)
+    if(FFMPEG_FOUND)
         message(STATUS "Found system FFmpeg via pkg-config")
         foreach(component IN LISTS FFMPEG_COMPONENTS)
             add_library(FFmpeg::${component} INTERFACE IMPORTED)
