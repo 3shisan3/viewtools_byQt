@@ -59,8 +59,17 @@ if(WIN32)
         # 获取 MinGW 的 bin 目录（存放运行时 DLL）
         get_filename_component(MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
         get_filename_component(MINGW_BIN_DIR "${MINGW_BIN_DIR}/../bin" ABSOLUTE)
-        # 设置部署脚本路径
-        set(DEPLOY_SCRIPT "${CMAKE_SOURCE_DIR}/script/tools/deploy_mingw_dlls.sh")
+
+        # 根据工具链类型选择部署脚本
+        if(CMAKE_CXX_COMPILER MATCHES ".*ucrt.*")
+            # UCRT 工具链
+            set(DEPLOY_SCRIPT "${CMAKE_SOURCE_DIR}/script/tools/deploy_ucrt_dlls.sh")
+            set(TOOLCHAIN_TYPE "UCRT64")
+        else()
+            # 标准 MinGW 工具链
+            set(DEPLOY_SCRIPT "${CMAKE_SOURCE_DIR}/script/tools/deploy_mingw_dlls.sh")
+            set(TOOLCHAIN_TYPE "MinGW")
+        endif()
 
         # 构建后分析依赖并复制
         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
@@ -70,7 +79,7 @@ if(WIN32)
                 "${MINGW_BIN_DIR}"
                 "${EXECUTABLE_OUTPUT_PATH}"
                 "$<TARGET_FILE:${PROJECT_NAME}>"
-            COMMENT "Copying required MinGW runtime DLLs..."
+            COMMENT "Copying required ${TOOLCHAIN_TYPE} runtime DLLs..."
         )
     endif()
 
