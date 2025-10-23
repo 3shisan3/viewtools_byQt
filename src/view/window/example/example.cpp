@@ -1,5 +1,7 @@
 #ifdef EXAMPLE_ON
 
+#include <QDebug>
+#include <QQmlEngine>
 #include <QDialog>
 #include <QLineEdit>
 #include <QLabel>
@@ -53,17 +55,61 @@ ExampleWindow::ExampleWindow(QWidget *parent)
 
 void ExampleWindow::showQmlWindow()
 {
-    // 创建QQuickWidget加载QML
+    qDebug() << "=== QML调试信息 ===";
+    
+    // 检查Qt版本和QML可用性
+    qDebug() << "Qt版本:" << QT_VERSION_STR;
+    qDebug() << "QML模块可用:" << !QQuickWindow::sceneGraphBackend().isEmpty();
+    
+    // 创建QQuickWidget
     QQuickWidget *qmlWidget = new QQuickWidget;
+    
+    // 设置导入路径
+    QStringList importPaths = qmlWidget->engine()->importPathList();
+    qDebug() << "QML导入路径:";
+    for(const QString& path : importPaths) {
+        qDebug() << "  " << path;
+    }
+    
+    // 增强错误处理
+    QObject::connect(qmlWidget->engine(), &QQmlEngine::warnings, [](const QList<QQmlError> &warnings) {
+        qDebug() << "收到QML警告，数量:" << warnings.count();
+        if(warnings.isEmpty()) {
+            qDebug() << "没有检测到QML错误，但可能存在问题";
+            return;
+        }
+        for (const auto &error : warnings) {
+            qDebug() << "QML错误详情:";
+            qDebug() << "  描述:" << error.description();
+            qDebug() << "  文件:" << error.url().toString();
+            qDebug() << "  行号:" << error.line();
+        }
+    });
+    
+    // 检查资源文件
+    QFile qmlFile(":/ui/qml/example.qml");
+    if(qmlFile.open(QIODevice::ReadOnly)) {
+        qDebug() << "QML文件成功打开，大小:" << qmlFile.size() << "字节";
+        qmlFile.close();
+    } else {
+        qDebug() << "无法打开QML资源文件";
+    }
+    
+    // 尝试加载QML
     qmlWidget->setSource(QUrl("qrc:/ui/qml/example.qml"));
-    qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
-    qmlWidget->setWindowTitle("QML界面");
-    qmlWidget->resize(400, 300);
-
+    
+    // 检查加载状态
+    if(qmlWidget->status() == QQuickWidget::Ready) {
+        qDebug() << "QML加载成功";
+    } else {
+        qDebug() << "QML加载状态:" << qmlWidget->status();
+        auto errors = qmlWidget->errors();
+        for(const auto& error : errors) {
+            qDebug() << "加载错误:" << error.toString();
+        }
+    }
+    
     qmlWidget->show();
-    this->hide();
-
-    // 关闭窗口后，程序的主事件循环（QApplication::exec()）没有其他窗口或逻辑来维持运行，因此程序退出
 }
 
 void ExampleWindow::showQssWindow()

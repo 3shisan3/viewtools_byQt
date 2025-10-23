@@ -10,7 +10,6 @@ using CurRegExp = QRegExp;
 #include <QRegularExpression>
 using CurRegExp = QRegularExpression;
 #endif
-#include <QRegularExpression>
 #include <QDebug>
 
 QMap<QString, SsSharderManager *> SsSharderManager::m_mapShader;

@@ -1,15 +1,51 @@
 # 设置默认Qt安装路径
 set(QT_PREFIX_PATH "" CACHE PATH "Default Qt install path")
 
-# 检查路径是否存在（仅在路径不为空时检查）
-if(QT_PREFIX_PATH)
-    if(NOT EXISTS ${QT_PREFIX_PATH})
-        message(FATAL_ERROR "QT_PREFIX_PATH: '${QT_PREFIX_PATH}' does not exist.")
+# 如果未设置 QT_PREFIX_PATH，尝试自动查找
+if(NOT QT_PREFIX_PATH)
+    # 方法1：从环境变量查找
+    if(DEFINED ENV{QTDIR})
+        set(QT_PREFIX_PATH "$ENV{QTDIR}")
+        message(STATUS "Using QTDIR environment variable: ${QT_PREFIX_PATH}")
+    # 方法2：从编译器路径推断（适用于 MinGW）
+    elseif(CMAKE_CXX_COMPILER MATCHES ".*msys.*")
+        get_filename_component(COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        get_filename_component(POSSIBLE_QT_DIR "${COMPILER_DIR}/../" ABSOLUTE)
+
+        set(QT_PREFIX_PATH "${POSSIBLE_QT_DIR}")
+        message(STATUS "Found Qt in MinGW directory: ${QT_PREFIX_PATH}")
+    # 方法3：在常见安装位置查找
+    else()
+        set(COMMON_QT_PATHS
+            "C:/Qt"
+            "$ENV{USERPROFILE}/Qt"
+            "C:/Program Files/Qt"
+        )
+        foreach(qt_path IN LISTS COMMON_QT_PATHS)
+            if(EXISTS "${qt_path}")
+                set(QT_PREFIX_PATH "${qt_path}")
+                message(STATUS "Found Qt in common location: ${QT_PREFIX_PATH}")
+                break()
+            endif()
+        endforeach()
+    endif()
+    
+    # 如果仍然未找到，设置默认值但不报错，让后续的 find_package 处理
+    if(NOT QT_PREFIX_PATH)
+        message(STATUS "QT_PREFIX_PATH not set, relying on system PATH for Qt discovery")
     endif()
 endif()
 
+# 检查路径是否存在（仅在路径不为空时检查）
+if(QT_PREFIX_PATH AND NOT EXISTS ${QT_PREFIX_PATH})
+    message(WARNING "QT_PREFIX_PATH: '${QT_PREFIX_PATH}' does not exist. Relying on system PATH.")
+    unset(QT_PREFIX_PATH CACHE)
+endif()
+
 # 将 Qt 路径添加到搜索目录中
-list(APPEND CMAKE_PREFIX_PATH ${QT_PREFIX_PATH})
+if(QT_PREFIX_PATH)
+    list(APPEND CMAKE_PREFIX_PATH ${QT_PREFIX_PATH})
+endif()
 message(STATUS "CMAKE_PREFIX_PATH: ${CMAKE_PREFIX_PATH}")
 
 # 尝试查找 Qt6
@@ -24,7 +60,7 @@ else()
         message(STATUS "Using Qt5")
         set(QT_VERSION 5)
     else()
-        message(FATAL_ERROR "path: ${QT_PREFIX_PATH} Neither Qt5 nor Qt6 found. Please install Qt5 or Qt6.")
+        message(FATAL_ERROR "Neither Qt5 nor Qt6 found. Please install Qt5 or Qt6 or set QT_PREFIX_PATH.")
     endif()
 endif()
 

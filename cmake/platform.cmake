@@ -57,8 +57,8 @@ endif()
 if(WIN32)
     if (MINGW)
         # 获取 MinGW 的 bin 目录（存放运行时 DLL）
-        get_filename_component(MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
-        get_filename_component(MINGW_BIN_DIR "${MINGW_BIN_DIR}/../bin" ABSOLUTE)
+        get_filename_component(COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        get_filename_component(TOOLCHAIN_BIN_DIR "${COMPILER_DIR}/../bin" ABSOLUTE)
 
         # 根据工具链类型选择部署脚本
         if(CMAKE_CXX_COMPILER MATCHES ".*ucrt.*")
@@ -76,21 +76,63 @@ if(WIN32)
             COMMAND ${CMAKE_COMMAND} -E echo "Deploying MinGW runtime DLLs..."
             COMMAND ${CMAKE_COMMAND} -E make_directory "${EXECUTABLE_OUTPUT_PATH}"
             COMMAND bash "${DEPLOY_SCRIPT}"
-                "${MINGW_BIN_DIR}"
+                "${TOOLCHAIN_BIN_DIR}"
                 "${EXECUTABLE_OUTPUT_PATH}"
                 "$<TARGET_FILE:${PROJECT_NAME}>"
             COMMENT "Copying required ${TOOLCHAIN_TYPE} runtime DLLs..."
         )
     endif()
 
-    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E echo "Starting Qt deployment..."
-        COMMAND ${QT_PREFIX_PATH}/bin/windeployqt.exe 
-            --qmldir ${CMAKE_CURRENT_SOURCE_DIR}/ui/qml 
-            "${EXECUTABLE_OUTPUT_PATH}/${PROJECT_NAME}.exe" > NUL 2>&1
-        COMMAND ${CMAKE_COMMAND} -E echo "Qt deployment completed"
-        COMMENT "Deploying Qt runtime dependencies..."
+    # 检测 Qt 版本并选择合适的部署工具
+    if(QT_VERSION EQUAL 6)
+        set(WINDEPLOYQT_EXE "windeployqt6.exe")
+    else()
+        set(WINDEPLOYQT_EXE "windeployqt.exe")
+    endif()
+
+    # 查找部署工具
+    find_program(WINDEPLOYQT
+        NAMES ${WINDEPLOYQT_EXE} windeployqt
+        PATHS 
+            "${QT_PREFIX_PATH}/bin"
+            "$ENV{QTDIR}/bin"
+            "$ENV{PATH}"
+        DOC "Qt Windows deployment tool"
     )
+
+    if(WINDEPLOYQT)
+        message(STATUS "Found Qt deployment tool: ${WINDEPLOYQT}")
+
+        # 检查是否包含 qmldir 文件
+        # 只是简单使用 QML 文件（如直接通过 QQmlApplicationEngine加载 example.qml），无需 qmldir。
+        # ​​如果想将 QML 文件组织为可复用的模块（例如 MyModule 1.0），则必须创建 qmldir。
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ui/qml/qmldir")
+            set(WINDEPLOYQT_QMLDIR "--qmldir ${CMAKE_CURRENT_SOURCE_DIR}/ui/qml")
+        else()
+            set(WINDEPLOYQT_QMLDIR "")
+        endif()
+        
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "Starting Qt deployment..."
+            COMMAND ${WINDEPLOYQT}
+                ${WINDEPLOYQT_QMLDIR}
+                "${EXECUTABLE_OUTPUT_PATH}/${PROJECT_NAME}.exe"
+            COMMAND ${CMAKE_COMMAND} -E echo "Qt deployment completed"
+            COMMENT "Deploying Qt runtime dependencies..."
+        )
+    else()
+        message(WARNING "Qt deployment tool not found. Please install it or set PATH correctly.")
+        message(WARNING "Searched for: ${WINDEPLOYQT_EXE}")
+        message(WARNING "QT_PREFIX_PATH: ${QT_PREFIX_PATH}")
+        
+        # 添加提示信息
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "Warning: Qt deployment was skipped"
+            COMMAND ${CMAKE_COMMAND} -E echo "Please run manually:"
+            COMMAND ${CMAKE_COMMAND} -E echo "  windeployqt --qmldir ${CMAKE_CURRENT_SOURCE_DIR}/ui/qml ${EXECUTABLE_OUTPUT_PATH}/${PROJECT_NAME}.exe"
+            COMMENT "Qt deployment skipped - run manually if needed"
+        )
+    endif()
 elseif(UNIX AND NOT APPLE AND NOT ANDROID)
     # Linux 平台使用 linuxdeployqt 或手动处理
     # 自动获取工具路径
@@ -118,7 +160,7 @@ elseif(UNIX AND NOT APPLE AND NOT ANDROID)
         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E echo "Manual dependency handling for Linux..."
             COMMAND ${CMAKE_COMMAND} -E make_directory "${EXECUTABLE_OUTPUT_PATH}/lib"
-            COMMAND sh -c "ldd ${EXECUTABLE_OUTPUT_PATH}/${PROJECT_NAME} | grep \"=> /\" | awk '{print \$3}' | xargs -I '{}' cp -v '{}' ${EXECUTABLE_OUTPUT_PATH}/lib"
+            COMMAND sh -c "ldd ${EXECUTABLE_OUTPUT_PATH}/${PROJECT_NAME} | grep \"=> /\" | awk '{print \\$3}' | xargs -I '{}' cp -v '{}' ${EXECUTABLE_OUTPUT_PATH}/lib"
             COMMAND sh -c "patchelf --set-rpath '\\$ORIGIN/lib' ${EXECUTABLE_OUTPUT_PATH}/${PROJECT_NAME}"
             COMMENT "Manually copying shared libraries..."
         )
