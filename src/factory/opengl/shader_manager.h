@@ -66,6 +66,4 @@ protected:
 };
 
 
-
-
 #endif // SHADER_MANAGER_H_

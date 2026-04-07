@@ -2,9 +2,10 @@
 
 #include "ffmpeg_player_widget.h"
 
+#include <QCoreApplication>
+#include <QDateTime>
 #include <QDebug>
 #include <QResizeEvent>
-#include <QDateTime>
 
 // FFmpeg日志回调
 static void ffmpegLogCallback(void *, int level, const char *fmt, va_list vl)

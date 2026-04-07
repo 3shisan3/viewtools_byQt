@@ -1,5 +1,7 @@
 #include "joystick_wheel.h"
 
+#include <cmath>
+
 #if QT_VERSION_MAJOR >= 6
     using TouchDeviceType = QPointingDevice;
 #else

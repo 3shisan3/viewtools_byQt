@@ -19,6 +19,15 @@
 #include <cmath>
 #include <QPainter>
 
+// 添加 GLU 头文件
+#if QT_VERSION_MAJOR < 6
+// Qt5 及之前版本包含系统的 GLU
+#  if defined(_WIN32)
+#    include <windows.h>
+#  endif
+#  include <GL/glu.h>
+#endif
+
 #define PICKSIZE 1024
 #define PICK_TOL 8                                                  // 拾取阈值（可读取配置文件，依据当前绘制要素，动态变化）
 
@@ -34,12 +43,10 @@ SsFixedPipelineGLWidgetBase::SsFixedPipelineGLWidgetBase(QWidget * parent)
     format.setProfile(QSurfaceFormat::CompatibilityProfile);        // 兼容模式
     format.setSamples(4);                                           // 启用4x MSAA
     setFormat(format);                                              // 关键：为当前 widget 设置格式
-
 }
 
 SsFixedPipelineGLWidgetBase::~SsFixedPipelineGLWidgetBase()
 {
-
 }
 
 void SsFixedPipelineGLWidgetBase::initializeGL()
@@ -253,10 +260,12 @@ void SsFixedPipelineGLWidgetBase::onMousePick(const QPointF &pos)
     glOrtho(left, right, bottom, top, -1.0, 1.0);   // 先应用原始投影矩阵
 
     // 叠加拾取矩阵
-#if QT_VERSION_MAJOR >= 6
-    customPickMatrix(GLdouble(pos.x()), GLdouble(vp[3] - pos.y()), PICK_TOL, PICK_TOL, vp);
-#else
+#if QT_VERSION_MAJOR < 6
+    // Qt5 及之前版本使用系统 GLU
     gluPickMatrix(GLdouble(pos.x()), GLdouble(vp[3] - pos.y()), PICK_TOL, PICK_TOL, vp);
+#else
+    // Qt6 使用自定义实现
+    customPickMatrix(GLdouble(pos.x()), GLdouble(vp[3] - pos.y()), PICK_TOL, PICK_TOL, vp);
 #endif
 
     /* 绘制场景 */

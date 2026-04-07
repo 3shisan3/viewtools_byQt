@@ -160,8 +160,8 @@ elseif(UNIX AND NOT APPLE AND NOT ANDROID)
         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E echo "Manual dependency handling for Linux..."
             COMMAND ${CMAKE_COMMAND} -E make_directory "${EXECUTABLE_OUTPUT_PATH}/lib"
-            COMMAND sh -c "ldd ${EXECUTABLE_OUTPUT_PATH}/${PROJECT_NAME} | grep \"=> /\" | awk '{print \\$3}' | xargs -I '{}' cp -v '{}' ${EXECUTABLE_OUTPUT_PATH}/lib"
-            COMMAND sh -c "patchelf --set-rpath '\\$ORIGIN/lib' ${EXECUTABLE_OUTPUT_PATH}/${PROJECT_NAME}"
+            COMMAND bash -c "ldd '${EXECUTABLE_OUTPUT_PATH}/${PROJECT_NAME}' | grep -E '=> /' | awk '{print \$3}' | xargs -I {} cp -v {} '${EXECUTABLE_OUTPUT_PATH}/lib/' 2>/dev/null || true"
+            COMMAND bash -c "patchelf --set-rpath '\\\$ORIGIN/lib' '${EXECUTABLE_OUTPUT_PATH}/${PROJECT_NAME}' 2>/dev/null || echo 'patchelf not available, skipping RPATH setting'"
             COMMENT "Manually copying shared libraries..."
         )
     endif()

@@ -81,8 +81,13 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
     foreach(component IN LISTS FFMPEG_COMPONENTS)
         if(WIN32)
             set(FFMPEG_LIB_NAME "${component}.lib") # 实际输出dll会包含版本信息，验证lib存在判断
+            # set(FFMPEG_LIB_NAME "${component}*.dll")
+        # elseif(APPLE)
+        #     # macOS: 匹配 .dylib 文件
+        #     set(FFMPEG_LIB_NAME "lib${component}.dylib*")
         else()
-            set(FFMPEG_LIB_NAME "${CMAKE_SHARED_LIBRARY_PREFIX}${component}${CMAKE_SHARED_LIBRARY_SUFFIX}")
+            set(FFMPEG_LIB_NAME "pkgconfig/${component}.pc") # 实际输出so会包含版本信息，验证lib存在判断
+            # set(FFMPEG_LIB_NAME "${CMAKE_SHARED_LIBRARY_PREFIX}${component}${CMAKE_SHARED_LIBRARY_SUFFIX}*")
         endif()
         
         if(EXISTS "${FFMPEG_INSTALL_DIR}/lib/${FFMPEG_LIB_NAME}" OR 
@@ -324,6 +329,7 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
             GIT_TAG "n${FFMPEG_CODE_VERSION}"
             PREFIX "${CMAKE_BINARY_DIR}/ffmpeg-build"
             BUILD_ALWAYS OFF  # 避免不必要的重建
+            UPDATE_DISCONNECTED ON  # 不检查远程更新，避免网络依赖和重复拉取
 
             # 配置前准备
             CONFIGURE_COMMAND

@@ -4,6 +4,7 @@
 #include <QStandardPaths>
 #include <QString>
 #include <QStyle>
+#include <QTime>
 #include <QVBoxLayout>
 
 #include "utils/option.h"

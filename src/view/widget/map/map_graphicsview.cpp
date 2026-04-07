@@ -1,5 +1,6 @@
 #include "map_graphicsview.h"
 
+#include <QCoreApplication>
 #include <QGraphicsPixmapItem>
 #include <QMouseEvent>
 #include <QPainter>

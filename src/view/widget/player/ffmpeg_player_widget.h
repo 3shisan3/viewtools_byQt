@@ -19,12 +19,15 @@ Version history
 #ifndef _FFMPEG_PLAYER_WIDGET_H
 #define _FFMPEG_PLAYER_WIDGET_H
 
+#include <QAudioFormat>
 #if QT_VERSION_MAJOR < 6
+#include <QAudioOutput>
 #include <QAudioDeviceInfo>
 #else
 #include <QMediaDevices>
 #include <QAudioDevice>
 #include <QAudioSink>
+#include <QAudioSource>
 #endif
 #include <QElapsedTimer>
 #include <QLabel>

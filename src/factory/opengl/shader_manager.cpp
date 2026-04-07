@@ -3,12 +3,14 @@
 #include <QOpenGLShader>
 #include <QFile>
 #include <regex>
+
+// Qt6 兼容性处理
 #if QT_VERSION_MAJOR < 6
 #include <QRegExp>
-using CurRegExp = QRegExp;
+using RegexClass = QRegExp;
 #else
 #include <QRegularExpression>
-using CurRegExp = QRegularExpression;
+using RegexClass = QRegularExpression;
 #endif
 #include <QDebug>
 
@@ -67,20 +69,27 @@ void SsSharderManager::loadShaderFromSourceCode(const QString &_vertex, const QS
 
     if (!addShaderFromSourceCode(QOpenGLShader::Vertex, _vertex_code))
     {
-
+        qDebug() << "Failed to add vertex shader";
     }
 
     if (!addShaderFromSourceCode(QOpenGLShader::Fragment, _fragment_code))
     {
-        
+        qDebug() << "Failed to add fragment shader";
     }
 
     // 解析着色器
 
     // 绑定数据块
-}
 
-// 绑定数据块
+    if (!link())
+    {
+        qDebug() << "Failed to link shader program:" << log();
+    }
+    else
+    {
+        qDebug() << "Shader program linked successfully";
+    }
+}
 
 // 预处理
 QString SsSharderManager::pretreatment(const QString &text)
@@ -88,28 +97,46 @@ QString SsSharderManager::pretreatment(const QString &text)
     // 移除多行注释
     QString result = text;
 
-    // 移除单行注释
+#if QT_VERSION_MAJOR < 6
+    // Qt5 使用 QRegExp
+    {
+        QRegExp regex("//[^\n]*");
+        result = result.replace(regex, "");
+    }
+    
+    {
+        QRegExp regex("/\\*.*\\*/");
+        regex.setMinimal(true);  // 设置为非贪婪模式
+        result = result.replace(regex, "");
+    }
+    
+    {
+        QRegExp regex("^[\\s]*$|^\\n$");
+        regex.setPatternSyntax(QRegExp::RegExp2);
+        result = result.replace(regex, "");
+    }
+#else
+    // Qt6 使用 QRegularExpression
     {
         QRegularExpression regex("//[^\n]*");
-
         result = result.replace(regex, "");
     }
 
     // 移除多行注释
     {
         QRegularExpression regex("/\\*.*?\\*/");
-
-        regex.setPatternOptions(QRegularExpression::DotMatchesEverythingOption);
-
+        regex.setPatternOptions(QRegularExpression::DotMatchesEverythingOption | 
+                                QRegularExpression::InvertedGreedinessOption);
         result = result.replace(regex, "");
     }
 
     // 移除空白行
     {
-        QRegularExpression regex("^[\\s]*$|^\\n$", QRegularExpression::MultilineOption);
-
+        QRegularExpression regex("^[\\s]*$|^\\n$", 
+                                 QRegularExpression::MultilineOption);
         result = result.replace(regex, "");
     }
+#endif
 
     return result;
 }
@@ -117,23 +144,34 @@ QString SsSharderManager::pretreatment(const QString &text)
 // 移除注释
 QString SsSharderManager::removeComments(QString &text)
 {
-    QString result;
+    QString result = text;
 
-    // 移除单行注释
+#if QT_VERSION_MAJOR < 6
+    // Qt5 使用 QRegExp
+    {
+        QRegExp regex("//[^\n]*");
+        result = result.replace(regex, "");
+    }
+    
+    {
+        QRegExp regex("/\\*.*\\*/");
+        regex.setMinimal(true);
+        result = result.replace(regex, "");
+    }
+#else
+    // Qt6 使用 QRegularExpression
     {
         QRegularExpression regex("//[^\n]*");
-
-        result = text.replace(regex, "");
+        result = result.replace(regex, "");
     }
-
-    // 移除多行注释
+    
     {
         QRegularExpression regex("/\\*.*?\\*/");
-
-        regex.setPatternOptions(QRegularExpression::DotMatchesEverythingOption);
-
-        result = text.replace(regex, "");
+        regex.setPatternOptions(QRegularExpression::DotMatchesEverythingOption | 
+                                QRegularExpression::InvertedGreedinessOption);
+        result = result.replace(regex, "");
     }
+#endif
 
     return result;
 }
