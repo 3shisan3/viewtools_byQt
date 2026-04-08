@@ -14,6 +14,11 @@ static void ffmpegLogCallback(void *, int level, const char *fmt, va_list vl)
     {
         char buffer[1024];
         vsnprintf(buffer, sizeof(buffer), fmt, vl);
+        char *p = buffer;
+        while (*p) {
+            if (*p == '\n' || *p == '\r') *p = ' ';
+            p++;
+        }
         qDebug() << "FFmpeg:" << buffer;
     }
 }
@@ -22,7 +27,7 @@ FFmpegDecoderThread::FFmpegDecoderThread(QObject *parent) : QThread(parent)
 {
     avformat_network_init();
     av_log_set_callback(ffmpegLogCallback);
-    av_log_set_level(AV_LOG_DEBUG);
+    av_log_set_level(AV_LOG_WARNING);
 }
 
 FFmpegDecoderThread::~FFmpegDecoderThread()
@@ -33,10 +38,14 @@ FFmpegDecoderThread::~FFmpegDecoderThread()
 bool FFmpegDecoderThread::openMedia(const QString &url)
 {
     close();
-
+    
     QMutexLocker lock(&m_mutex);
+    m_seekRequested = false;
     m_firstVideoPts = -1;
     m_videoStartTime = 0;
+    m_videoClock = 0;
+    m_audioClock = 0;
+    m_lastFrameTime = 0;
 
     // 打开输入流
     AVDictionary *options = nullptr;
@@ -44,6 +53,7 @@ bool FFmpegDecoderThread::openMedia(const QString &url)
     {
         av_dict_set(&options, "rtsp_transport", "tcp", 0);
         av_dict_set(&options, "stimeout", "5000000", 0);
+        av_dict_set(&options, "max_delay", "500000", 0);
     }
     else
     {
@@ -77,12 +87,16 @@ bool FFmpegDecoderThread::openMedia(const QString &url)
         return false;
     }
 
-    // 获取总时长
+    if (hasAudio && !m_audio.output)
+    {
+        qWarning() << "Audio output initialization failed, video only mode";
+    }
+
     qint64 duration = (m_formatCtx->duration != AV_NOPTS_VALUE) ? m_formatCtx->duration * 1000 / AV_TIME_BASE : 0;
     emit durationChanged(duration);
 
-    m_clockTimer.start();
     m_running = true;
+    m_paused = false;
     emit playStateChanged(PlayerWidgetBase::PlayingState);
     start();
     return true;
@@ -115,12 +129,23 @@ bool FFmpegDecoderThread::initVideo()
         return false;
     }
 
-    // 初始化图像转换上下文
+    // 计算帧间隔
+    AVRational frameRate = av_guess_frame_rate(m_formatCtx,
+                                               m_formatCtx->streams[m_video.streamIndex],
+                                               nullptr);
+    if (frameRate.den && frameRate.num)
+    {
+        m_frameInterval = 1000000 * frameRate.den / frameRate.num;
+        qDebug() << "Frame rate:" << frameRate.num << "/" << frameRate.den
+                 << "Interval:" << m_frameInterval << "us";
+    }
+
     m_video.swsCtx = sws_getContext(
         m_video.codecCtx->width, m_video.codecCtx->height, m_video.codecCtx->pix_fmt,
         m_video.codecCtx->width, m_video.codecCtx->height, AV_PIX_FMT_RGB32,
         SWS_BILINEAR, nullptr, nullptr, nullptr);
 
+    qDebug() << "Video initialized:" << m_video.codecCtx->width << "x" << m_video.codecCtx->height;
     return true;
 }
 
@@ -133,7 +158,6 @@ bool FFmpegDecoderThread::initAudio()
         return false;
     }
 
-    // 获取解码器参数
     AVCodecParameters *params = m_formatCtx->streams[m_audio.streamIndex]->codecpar;
     const AVCodec *codec = avcodec_find_decoder(params->codec_id);
     if (!codec)
@@ -142,34 +166,35 @@ bool FFmpegDecoderThread::initAudio()
         return false;
     }
 
-    // 初始化解码上下文
     m_audio.codecCtx = avcodec_alloc_context3(codec);
-    if (!m_audio.codecCtx || avcodec_parameters_to_context(m_audio.codecCtx, params) < 0)
+    if (avcodec_parameters_to_context(m_audio.codecCtx, params) < 0)
     {
         avcodec_free_context(&m_audio.codecCtx);
         return false;
     }
 
-    // 处理声道布局
-    if (params->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC)
+    if (m_audio.codecCtx->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC)
     {
-        av_channel_layout_default(&m_audio.codecCtx->ch_layout, params->ch_layout.nb_channels);
+        av_channel_layout_default(&m_audio.codecCtx->ch_layout, 
+                                   m_audio.codecCtx->ch_layout.nb_channels);
     }
 
-    // 打开解码器
     if (avcodec_open2(m_audio.codecCtx, codec, nullptr) < 0)
     {
         avcodec_free_context(&m_audio.codecCtx);
         return false;
     }
 
-    // 初始化重采样器
     m_audio.swrCtx = swr_alloc();
+    if (!m_audio.swrCtx)
+    {
+        return false;
+    }
+
+    AVChannelLayout out_chlayout = AV_CHANNEL_LAYOUT_STEREO;
     av_opt_set_chlayout(m_audio.swrCtx, "in_chlayout", &m_audio.codecCtx->ch_layout, 0);
     av_opt_set_int(m_audio.swrCtx, "in_sample_rate", m_audio.codecCtx->sample_rate, 0);
     av_opt_set_sample_fmt(m_audio.swrCtx, "in_sample_fmt", m_audio.codecCtx->sample_fmt, 0);
-
-    AVChannelLayout out_chlayout = AV_CHANNEL_LAYOUT_STEREO;
     av_opt_set_chlayout(m_audio.swrCtx, "out_chlayout", &out_chlayout, 0);
     av_opt_set_int(m_audio.swrCtx, "out_sample_rate", m_out_sample_rate, 0);
     av_opt_set_sample_fmt(m_audio.swrCtx, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
@@ -180,45 +205,11 @@ bool FFmpegDecoderThread::initAudio()
         return false;
     }
 
-    // 创建音频输出设备
-    QAudioFormat format = createAudioFormat();
-#if QT_VERSION_MAJOR < 6
-    QAudioDeviceInfo deviceInfo(QAudioDeviceInfo::defaultOutputDevice());
-    if (!deviceInfo.isFormatSupported(format))
-    {
-        format = deviceInfo.nearestFormat(format);
-        m_out_sample_rate = format.sampleRate();
-        qWarning() << "Using nearest audio format with sample rate:" << m_out_sample_rate;
-    }
-    m_audio.output = new QAudioOutput(deviceInfo, format, this);
-#else
-    QAudioDevice deviceInfo(QMediaDevices::defaultAudioOutput());
-    if (!deviceInfo.isFormatSupported(format))
-    {
-        // Qt6中需要手动调整格式
-        if (!format.isValid()) {
-            format.setChannelCount(2);
-            format.setSampleFormat(QAudioFormat::Int16);
-            format.setSampleRate(m_out_sample_rate);
-        }
-        qWarning() << "Using adjusted audio format with sample rate:" << m_out_sample_rate;
-    }
-    m_audio.output = new QAudioSink(deviceInfo, format, this);
-#endif
-
-    m_audio.device = m_audio.output->start();
-
-    if (!m_audio.device)
-    {
-        qWarning() << "Failed to start audio device";
-        return false;
-    }
-
-    qDebug() << "Audio initialized successfully";
-    return true;
+    m_audio.bytesPerSample = av_get_bytes_per_sample(AV_SAMPLE_FMT_S16) * 2;
+    return initAudioOutput();
 }
 
-QAudioFormat FFmpegDecoderThread::createAudioFormat() const
+bool FFmpegDecoderThread::initAudioOutput()
 {
     QAudioFormat format;
 #if QT_VERSION_MAJOR < 6
@@ -228,17 +219,57 @@ QAudioFormat FFmpegDecoderThread::createAudioFormat() const
     format.setCodec("audio/pcm");
     format.setByteOrder(QAudioFormat::LittleEndian);
     format.setSampleType(QAudioFormat::SignedInt);
+    
+    QAudioDeviceInfo deviceInfo(QAudioDeviceInfo::defaultOutputDevice());
+    if (deviceInfo.isNull())
+    {
+        qWarning() << "No audio output device available";
+        return false;
+    }
+    
+    if (!deviceInfo.isFormatSupported(format))
+    {
+        format = deviceInfo.nearestFormat(format);
+        m_out_sample_rate = format.sampleRate();
+        qDebug() << "Using nearest audio format, sample rate:" << m_out_sample_rate;
+    }
+    
+    m_audio.output = new QAudioOutput(deviceInfo, format, this);
 #else
     format.setSampleRate(m_out_sample_rate);
     format.setChannelCount(2);
     format.setSampleFormat(QAudioFormat::Int16);
+    
+    QAudioDevice deviceInfo(QMediaDevices::defaultAudioOutput());
+    if (!deviceInfo.isFormatSupported(format))
+    {
+        qDebug() << "Audio format not supported, using nearest";
+    }
+    m_audio.output = new QAudioSink(deviceInfo, format, this);
 #endif
-    return format;
+
+    if (!m_audio.output)
+    {
+        qWarning() << "Failed to create audio output";
+        return false;
+    }
+
+    m_audio.device = m_audio.output->start();
+    if (!m_audio.device)
+    {
+        qWarning() << "Failed to start audio device";
+        delete m_audio.output;
+        m_audio.output = nullptr;
+        return false;
+    }
+
+    qDebug() << "Audio output initialized successfully";
+    return true;
 }
 
 void FFmpegDecoderThread::close(bool waitForFinished)
 {
-    if (!m_running)
+    if (!m_running && !isRunning())
         return;
 
     {
@@ -253,19 +284,18 @@ void FFmpegDecoderThread::close(bool waitForFinished)
         wait();
     }
 
-    // 安全释放音频资源
     if (m_audio.output)
     {
-        // 先停止设备再释放资源
+        if (m_audio.device)
+        {
+            m_audio.device->close();
+        }
         m_audio.output->stop();
-
-        // 延迟删除音频输出对象
-        QMetaObject::invokeMethod(m_audio.output, "deleteLater", Qt::QueuedConnection);
+        m_audio.output->deleteLater();
         m_audio.output = nullptr;
         m_audio.device = nullptr;
     }
 
-    // 释放视频资源
     if (m_video.swsCtx)
     {
         sws_freeContext(m_video.swsCtx);
@@ -274,25 +304,20 @@ void FFmpegDecoderThread::close(bool waitForFinished)
     if (m_video.codecCtx)
     {
         avcodec_free_context(&m_video.codecCtx);
-        m_video.codecCtx = nullptr;
     }
 
-    // 释放音频资源
     if (m_audio.swrCtx)
     {
         swr_free(&m_audio.swrCtx);
-        m_audio.swrCtx = nullptr;
     }
     if (m_audio.codecCtx)
     {
         avcodec_free_context(&m_audio.codecCtx);
-        m_audio.codecCtx = nullptr;
     }
 
     if (m_formatCtx)
     {
         avformat_close_input(&m_formatCtx);
-        avformat_free_context(m_formatCtx);
         m_formatCtx = nullptr;
     }
 
@@ -302,27 +327,12 @@ void FFmpegDecoderThread::close(bool waitForFinished)
 void FFmpegDecoderThread::run()
 {
     AVPacket *pkt = av_packet_alloc();
-    qint64 lastVideoTime = 0;
-    qint64 frameDelay = 40000; // 默认40ms(25fps)
-
-    // 正确计算视频帧间隔时间(微秒)
-    if (m_video.codecCtx && m_video.streamIndex >= 0)
-    {
-        AVRational frameRate = av_guess_frame_rate(m_formatCtx,
-                                                   m_formatCtx->streams[m_video.streamIndex],
-                                                   nullptr);
-        if (frameRate.den && frameRate.num)
-        {
-            // 修正帧间隔计算：从帧率转换为微秒间隔
-            frameDelay = 1000000 * frameRate.den / frameRate.num;
-            qDebug() << "Detected frame rate:" << frameRate.num << "/" << frameRate.den
-                     << "Frame interval:" << frameDelay << "us";
-        }
-    }
+    if (!pkt)
+        return;
 
     while (m_running)
     {
-        // 处理暂停状态
+        // 处理暂停
         {
             QMutexLocker lock(&m_mutex);
             while (m_paused && m_running)
@@ -331,9 +341,10 @@ void FFmpegDecoderThread::run()
             }
         }
 
-        // 处理定位请求
+        // 处理跳转
         if (m_seekRequested)
         {
+            QMutexLocker lock(&m_mutex);
             int64_t seek_target = av_rescale(m_seekPos, AV_TIME_BASE, 1000);
             int ret = av_seek_frame(m_formatCtx, -1, seek_target, AVSEEK_FLAG_BACKWARD);
             if (ret >= 0)
@@ -342,11 +353,11 @@ void FFmpegDecoderThread::run()
                     avcodec_flush_buffers(m_video.codecCtx);
                 if (m_audio.codecCtx)
                     avcodec_flush_buffers(m_audio.codecCtx);
-                m_clockTimer.restart();
                 m_firstVideoPts = -1;
-                m_video.clock = m_seekPos * 1000;
-                m_audio.clock = m_seekPos * 1000;
+                m_videoClock = m_seekPos / 1000.0;
+                m_audioClock = m_seekPos / 1000.0;
                 emit positionChanged(m_seekPos);
+                m_lastFrameTime = 0;
             }
             m_seekRequested = false;
             continue;
@@ -363,35 +374,20 @@ void FFmpegDecoderThread::run()
                 emit positionChanged(duration());
                 break;
             }
-            QThread::msleep(10);
+            QThread::msleep(5);
             continue;
         }
 
         // 视频包处理
         if (pkt->stream_index == m_video.streamIndex)
         {
-            qint64 currentTime = QDateTime::currentMSecsSinceEpoch() * 1000;
-
-            // 控制视频帧显示间隔
-            if (lastVideoTime > 0)
-            {
-                qint64 elapsed = currentTime - lastVideoTime;
-                if (elapsed < frameDelay / 1000)
-                { // 转换为毫秒比较
-                    QThread::usleep((frameDelay / 1000) - elapsed);
-                }
-            }
-
             decodeVideoPacket(pkt);
-            lastVideoTime = QDateTime::currentMSecsSinceEpoch() * 1000;
         }
         // 音频包处理
-        else if (pkt->stream_index == m_audio.streamIndex)
+        else if (pkt->stream_index == m_audio.streamIndex && m_audio.output)
         {
             decodeAudioPacket(pkt);
         }
-
-        av_packet_unref(pkt);
     }
 
     av_packet_free(&pkt);
@@ -401,30 +397,25 @@ void FFmpegDecoderThread::run()
 void FFmpegDecoderThread::decodeVideoPacket(AVPacket *pkt)
 {
     int ret = avcodec_send_packet(m_video.codecCtx, pkt);
-    if (ret < 0 && ret != AVERROR(EAGAIN))
+    if (ret < 0)
         return;
 
     while (true)
     {
         AVFrame *frame = av_frame_alloc();
         ret = avcodec_receive_frame(m_video.codecCtx, frame);
+        
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
         {
             av_frame_free(&frame);
             break;
         }
-
-        // 计算显示时间戳
-        qint64 pts = (frame->pts == AV_NOPTS_VALUE) ? frame->pkt_dts : frame->pts;
-        pts = av_rescale_q(pts, m_formatCtx->streams[m_video.streamIndex]->time_base, {1, 1000000});
-
-        if (m_firstVideoPts == -1)
+        if (ret < 0)
         {
-            m_firstVideoPts = pts;
-            m_videoStartTime = QDateTime::currentMSecsSinceEpoch() * 1000;
+            av_frame_free(&frame);
+            break;
         }
 
-        updateVideoClock(pts);
         displayVideoFrame(frame);
         av_frame_free(&frame);
     }
@@ -432,7 +423,7 @@ void FFmpegDecoderThread::decodeVideoPacket(AVPacket *pkt)
 
 void FFmpegDecoderThread::displayVideoFrame(AVFrame *frame)
 {
-    // 计算显示时间戳（微秒）
+    // 计算PTS（微秒）
     qint64 pts = (frame->pts == AV_NOPTS_VALUE) ? frame->pkt_dts : frame->pts;
     pts = av_rescale_q(pts,
                        m_formatCtx->streams[m_video.streamIndex]->time_base,
@@ -442,80 +433,85 @@ void FFmpegDecoderThread::displayVideoFrame(AVFrame *frame)
     if (m_firstVideoPts == -1)
     {
         m_firstVideoPts = pts;
-        m_videoStartTime = QDateTime::currentMSecsSinceEpoch() * 1000;
-        qDebug() << "First video frame PTS:" << m_firstVideoPts
-                 << "Start time:" << m_videoStartTime;
+        m_videoStartTime = av_gettime_relative();
+        qDebug() << "First video frame PTS:" << m_firstVideoPts;
     }
 
     // 计算应该显示的时间
-    qint64 currentTime = QDateTime::currentMSecsSinceEpoch() * 1000;
+    qint64 currentTime = av_gettime_relative();
     qint64 expectedTime = m_videoStartTime + (pts - m_firstVideoPts);
     qint64 delay = expectedTime - currentTime;
 
-    // 音视频同步
-    if (m_audio.codecCtx)
+    // 音视频同步（如果有音频）
+    if (m_audio.output && m_audioClock > 0)
     {
-        // 有音频时使用音频时钟作为参考
-        qint64 audioClock = m_audio.clock;
-        qint64 audioDiff = pts - audioClock;
+        double videoTime = pts / 1000000.0;
+        delay = (videoTime - m_audioClock) * 1000000;
+    }
 
-        // 优先使用音频同步
-        if (abs(audioDiff) > 5000)
-        { // 差异大于5ms时使用音频同步
-            delay = audioDiff;
+    // 同步控制
+    if (delay > 5000)
+    {
+        // 需要等待，但不超过50ms
+        int waitUs = qMin((int)delay, 50000);
+        QThread::usleep(waitUs);
+    }
+    else if (delay < -50000)
+    {
+        // 视频落后太多，跳过该帧
+        static int skipCount = 0;
+        if (skipCount++ % 30 == 0)
+        {
+            qDebug() << "Skipping late frame, delay:" << delay / 1000 << "ms";
         }
-    }
-
-    // 控制显示时间（限制最大延迟为1秒）
-    delay = qBound(-1000000LL, delay, 1000000LL);
-
-    if (delay > 1000)
-    { // 需要延迟
-        QThread::usleep(delay);
-    }
-    else if (delay < -100000)
-    { // 视频落后超过100ms则跳过
-        qDebug() << "Dropping late frame, late by:" << -delay << "us";
         return;
     }
 
-    updateVideoClock(pts);
+    // 更新视频时钟
+    m_videoClock = pts / 1000000.0;
 
     // 转换为RGB32
-    uint8_t *data[1] = {new uint8_t[m_video.codecCtx->width * m_video.codecCtx->height * 4]};
+    uint8_t *buffer = new uint8_t[m_video.codecCtx->width * m_video.codecCtx->height * 4];
+    uint8_t *data[1] = {buffer};
     int linesize[1] = {m_video.codecCtx->width * 4};
 
     sws_scale(m_video.swsCtx, frame->data, frame->linesize, 0,
               frame->height, data, linesize);
 
-    QImage image(data[0], m_video.codecCtx->width, m_video.codecCtx->height, QImage::Format_RGB32, [](void *ptr)
-                 { delete[] static_cast<uint8_t *>(ptr); }, data[0]);
+    QImage image(buffer, m_video.codecCtx->width, m_video.codecCtx->height, 
+                 QImage::Format_RGB32, [](void *ptr) { delete[] static_cast<uint8_t*>(ptr); }, 
+                 buffer);
 
     emit frameReady(image.copy());
-    emit positionChanged(pts / 1000); // 转为毫秒
+    emit positionChanged(pts / 1000);
+    
+    // 帧间延迟控制
+    qint64 now = av_gettime_relative();
+    if (m_lastFrameTime > 0)
+    {
+        qint64 elapsed = now - m_lastFrameTime;
+        if (elapsed < m_frameInterval)
+        {
+            QThread::usleep(m_frameInterval - elapsed);
+        }
+    }
+    m_lastFrameTime = av_gettime_relative();
 }
 
 void FFmpegDecoderThread::decodeAudioPacket(AVPacket *pkt)
 {
     if (!m_audio.swrCtx || !m_audio.codecCtx || !m_audio.device)
-    {
         return;
-    }
 
     int ret = avcodec_send_packet(m_audio.codecCtx, pkt);
-    if (ret < 0 && ret != AVERROR(EAGAIN))
-    {
-        char errbuf[AV_ERROR_MAX_STRING_SIZE];
-        av_strerror(ret, errbuf, sizeof(errbuf));
-        qWarning() << "Error sending audio packet:" << errbuf;
+    if (ret < 0)
         return;
-    }
 
     while (m_running)
     {
         AVFrame *frame = av_frame_alloc();
         ret = avcodec_receive_frame(m_audio.codecCtx, frame);
-
+        
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
         {
             av_frame_free(&frame);
@@ -523,21 +519,18 @@ void FFmpegDecoderThread::decodeAudioPacket(AVPacket *pkt)
         }
         if (ret < 0)
         {
-            char errbuf[AV_ERROR_MAX_STRING_SIZE];
-            av_strerror(ret, errbuf, sizeof(errbuf));
-            qWarning() << "Error receiving audio frame:" << errbuf;
             av_frame_free(&frame);
             break;
         }
 
-        // 计算PTS并立即更新音频时钟
+        // 计算PTS
         qint64 pts = (frame->pts == AV_NOPTS_VALUE) ? frame->pkt_dts : frame->pts;
-        pts = av_rescale_q(pts, m_formatCtx->streams[m_audio.streamIndex]->time_base, {1, 1000000});
+        pts = av_rescale_q(pts,
+                          m_formatCtx->streams[m_audio.streamIndex]->time_base,
+                          {1, 1000000});
 
-        {
-            QMutexLocker lock(&m_mutex);
-            m_audio.clock = pts;
-        }
+        // 更新音频时钟
+        m_audioClock = pts / 1000000.0;
 
         // 计算输出样本数
         int out_samples = av_rescale_rnd(
@@ -548,10 +541,8 @@ void FFmpegDecoderThread::decodeAudioPacket(AVPacket *pkt)
 
         // 分配输出缓冲区
         uint8_t *output = nullptr;
-        int linesize = 0;
-        if (av_samples_alloc(&output, &linesize, 2, out_samples, AV_SAMPLE_FMT_S16, 0) < 0)
+        if (av_samples_alloc(&output, nullptr, 2, out_samples, AV_SAMPLE_FMT_S16, 0) < 0)
         {
-            qWarning() << "Failed to allocate audio samples";
             av_frame_free(&frame);
             break;
         }
@@ -562,41 +553,42 @@ void FFmpegDecoderThread::decodeAudioPacket(AVPacket *pkt)
 
         if (realSamples > 0)
         {
-            QMutexLocker lock(&m_mutex);
-
+            int dataSize = realSamples * m_audio.bytesPerSample;
+            
+            // 音量控制
+            if (m_volume != 100)
+            {
+                float volumeFactor = m_volume / 100.0f;
+                int16_t *samples = reinterpret_cast<int16_t*>(output);
+                int sampleCount = dataSize / sizeof(int16_t);
+                for (int i = 0; i < sampleCount; ++i)
+                {
+                    samples[i] = static_cast<int16_t>(qBound(-32768.0f, 
+                                                              samples[i] * volumeFactor, 
+                                                              32767.0f));
+                }
+            }
+            
             // 静音处理
             if (m_muted)
             {
-                memset(output, 0, realSamples * 4); // 16-bit stereo = 4 bytes per sample
+                memset(output, 0, dataSize);
             }
-            // 音量控制
-            else if (m_volume < 0.99f || m_volume > 1.01f)
-            {
-                applyVolume(output, realSamples * 4);
-            }
-
-            // 分块写入音频数据
-            qint64 bytesToWrite = realSamples * 4;
+            
+            // 写入音频数据
             qint64 bytesWritten = 0;
-            const uint8_t *dataPtr = output;
-            int retryCount = 3;
-
-            while (bytesWritten < bytesToWrite && retryCount-- > 0)
+            while (bytesWritten < dataSize && m_running)
             {
-                qint64 freeBytes = static_cast<qint64>(m_audio.output->bytesFree());
-                qint64 remainingBytes = bytesToWrite - bytesWritten;
-                qint64 chunkSize = qMin(remainingBytes, freeBytes);
-
-                if (chunkSize <= 0)
+                qint64 bytesFree = m_audio.output->bytesFree();
+                if (bytesFree <= 0)
                 {
                     QThread::usleep(1000);
                     continue;
                 }
-
-                qint64 written = m_audio.device->write(
-                    reinterpret_cast<const char *>(dataPtr + bytesWritten),
-                    static_cast<qint64>(chunkSize));
-
+                
+                qint64 toWrite = qMin((qint64)(dataSize - bytesWritten), bytesFree);
+                qint64 written = m_audio.device->write((const char*)output + bytesWritten, toWrite);
+                
                 if (written > 0)
                 {
                     bytesWritten += written;
@@ -606,11 +598,6 @@ void FFmpegDecoderThread::decodeAudioPacket(AVPacket *pkt)
                     break;
                 }
             }
-
-            if (bytesWritten < bytesToWrite)
-            {
-                qDebug() << "Audio data dropped:" << (bytesToWrite - bytesWritten) << "bytes";
-            }
         }
 
         av_freep(&output);
@@ -618,30 +605,19 @@ void FFmpegDecoderThread::decodeAudioPacket(AVPacket *pkt)
     }
 }
 
-void FFmpegDecoderThread::applyVolume(uint8_t *data, int len)
+double FFmpegDecoderThread::getMasterClock()
 {
-    int16_t *samples = reinterpret_cast<int16_t *>(data);
-    const int count = len / sizeof(int16_t);
-
-    for (int i = 0; i < count; ++i)
-    {
-        samples[i] = static_cast<int16_t>(qBound(-32768.0f, samples[i] * m_volume, 32767.0f));
-    }
+    return m_audio.output ? m_audioClock : m_videoClock;
 }
 
-qint64 FFmpegDecoderThread::getMasterClock() const
+void FFmpegDecoderThread::updateVideoClock(double pts)
 {
-    return m_audio.codecCtx ? m_audio.clock : m_video.clock;
+    m_videoClock = pts;
 }
 
-void FFmpegDecoderThread::updateVideoClock(qint64 pts)
+void FFmpegDecoderThread::updateAudioClock(double pts)
 {
-    m_video.clock = pts;
-}
-
-void FFmpegDecoderThread::updateAudioClock(qint64 pts)
-{
-    m_audio.clock = pts;
+    m_audioClock = pts;
 }
 
 qint64 FFmpegDecoderThread::duration() const
@@ -674,43 +650,33 @@ void FFmpegDecoderThread::seekTo(qint64 posMs)
     QMutexLocker locker(&m_mutex);
     m_seekPos = qBound(0LL, posMs, duration());
     m_seekRequested = true;
+    m_pauseCondition.wakeAll();
 }
 
-void FFmpegDecoderThread::setVolume(float volume)
+void FFmpegDecoderThread::setVolume(int volume)
 {
-    volume = qBound(0.0f, volume / 100.0f, 1.0f);
-    m_volume = volume;
-    emit volumeChanged(static_cast<int>(volume * 100));
+    m_volume = qBound(0, volume, 100);
+    emit volumeChanged(m_volume);
 }
 
 void FFmpegDecoderThread::setMute()
 {
     QMutexLocker lock(&m_mutex);
     m_muted = !m_muted;
-
-    // 立即应用静音状态
-    if (m_audio.device && m_muted)
-    {
-#if QT_VERSION_MAJOR < 6
-        m_audio.device->write(QByteArray(m_audio.output->periodSize(), 0));
-#else
-        // Qt6 使用 bufferSize() 替代 periodSize()
-        m_audio.device->write(QByteArray(m_audio.output->bufferSize(), 0));
-#endif
-    }
-
     emit muteStateChanged(m_muted);
 }
+
+// FFmpegPlayer 实现
 
 FFmpegPlayer::FFmpegPlayer(QWidget *parent) : QWidget(parent),
                                               m_displayLabel_(new QLabel(this)),
                                               m_playerCore_(new PlayerWidgetBase(this)),
                                               m_decoder_(new FFmpegDecoderThread(this))
 {
-
     m_displayLabel_->setAlignment(Qt::AlignCenter);
     m_displayLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-    m_displayLabel_->setAttribute(Qt::WA_OpaquePaintEvent);
+    m_displayLabel_->setScaledContents(true);
+    m_displayLabel_->setStyleSheet("background-color: black;");
 
     setupConnections();
 }
@@ -734,21 +700,34 @@ PlayerWidgetBase *FFmpegPlayer::PlayerCore() const
 void FFmpegPlayer::setupConnections()
 {
     // 所有连接使用QueuedConnection确保线程安全
-    connect(m_decoder_, &FFmpegDecoderThread::frameReady, this, &FFmpegPlayer::updateFrame, Qt::QueuedConnection);
+    connect(m_decoder_, &FFmpegDecoderThread::frameReady, 
+            this, &FFmpegPlayer::updateFrame, Qt::QueuedConnection);
     // 解码器 -> 播放器核心
-    connect(m_decoder_, &FFmpegDecoderThread::positionChanged, m_playerCore_, &PlayerWidgetBase::currentPosition, Qt::QueuedConnection);
-    connect(m_decoder_, &FFmpegDecoderThread::durationChanged, m_playerCore_, &PlayerWidgetBase::currentDuration, Qt::QueuedConnection);
-    connect(m_decoder_, &FFmpegDecoderThread::playStateChanged, m_playerCore_, &PlayerWidgetBase::playStateChanged, Qt::QueuedConnection);
-    connect(m_decoder_, &FFmpegDecoderThread::volumeChanged, m_playerCore_, &PlayerWidgetBase::currentVolume, Qt::QueuedConnection);
-    connect(m_decoder_, &FFmpegDecoderThread::muteStateChanged, m_playerCore_, &PlayerWidgetBase::muteStateChanged, Qt::QueuedConnection);
-    connect(m_decoder_, &FFmpegDecoderThread::errorOccurred, m_playerCore_, &PlayerWidgetBase::errorInfoShow, Qt::QueuedConnection);
+    connect(m_decoder_, &FFmpegDecoderThread::positionChanged, 
+            m_playerCore_, &PlayerWidgetBase::currentPosition, Qt::QueuedConnection);
+    connect(m_decoder_, &FFmpegDecoderThread::durationChanged, 
+            m_playerCore_, &PlayerWidgetBase::currentDuration, Qt::QueuedConnection);
+    connect(m_decoder_, &FFmpegDecoderThread::playStateChanged, 
+            m_playerCore_, &PlayerWidgetBase::playStateChanged, Qt::QueuedConnection);
+    connect(m_decoder_, &FFmpegDecoderThread::volumeChanged, 
+            m_playerCore_, &PlayerWidgetBase::currentVolume, Qt::QueuedConnection);
+    connect(m_decoder_, &FFmpegDecoderThread::muteStateChanged, 
+            m_playerCore_, &PlayerWidgetBase::muteStateChanged, Qt::QueuedConnection);
+    connect(m_decoder_, &FFmpegDecoderThread::errorOccurred, 
+            m_playerCore_, &PlayerWidgetBase::errorInfoShow, Qt::QueuedConnection);
     // 播放器核心 -> 解码器
-    connect(m_playerCore_, &PlayerWidgetBase::setPlayerFile, this, &FFmpegPlayer::play, Qt::QueuedConnection);
-    connect(m_playerCore_, &PlayerWidgetBase::setPlayerUrl, this, &FFmpegPlayer::play, Qt::QueuedConnection);
-    connect(m_playerCore_, &PlayerWidgetBase::changePlayState, m_decoder_, &FFmpegDecoderThread::setPaused, Qt::QueuedConnection);
-    connect(m_playerCore_, &PlayerWidgetBase::changeMuteState, m_decoder_, &FFmpegDecoderThread::setMute, Qt::QueuedConnection);
-    connect(m_playerCore_, &PlayerWidgetBase::seekPlay, m_decoder_, &FFmpegDecoderThread::seekTo, Qt::QueuedConnection);
-    connect(m_playerCore_, &PlayerWidgetBase::setVolume, m_decoder_, &FFmpegDecoderThread::setVolume, Qt::QueuedConnection);
+    connect(m_playerCore_, &PlayerWidgetBase::setPlayerFile, 
+            this, &FFmpegPlayer::play, Qt::QueuedConnection);
+    connect(m_playerCore_, &PlayerWidgetBase::setPlayerUrl, 
+            this, &FFmpegPlayer::play, Qt::QueuedConnection);
+    connect(m_playerCore_, &PlayerWidgetBase::changePlayState, 
+            m_decoder_, &FFmpegDecoderThread::setPaused, Qt::QueuedConnection);
+    connect(m_playerCore_, &PlayerWidgetBase::changeMuteState, 
+            m_decoder_, &FFmpegDecoderThread::setMute, Qt::QueuedConnection);
+    connect(m_playerCore_, &PlayerWidgetBase::seekPlay, 
+            m_decoder_, &FFmpegDecoderThread::seekTo, Qt::QueuedConnection);
+    connect(m_playerCore_, &PlayerWidgetBase::setVolume, 
+            m_decoder_, &FFmpegDecoderThread::setVolume, Qt::QueuedConnection);
 }
 
 void FFmpegPlayer::play(const QString &url)
@@ -775,8 +754,11 @@ void FFmpegPlayer::stop()
 
 void FFmpegPlayer::updateFrame(const QImage &image)
 {
-    m_displayLabel_->setPixmap(QPixmap::fromImage(image)
-                                   .scaled(size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    if (!image.isNull())
+    {
+        m_displayLabel_->setPixmap(QPixmap::fromImage(image)
+                                       .scaled(size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    }
 }
 
 void FFmpegPlayer::resizeEvent(QResizeEvent *event)

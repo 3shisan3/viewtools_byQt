@@ -1,6 +1,6 @@
 /*****************************************************************
 File:        ffmpeg_player_widget.h
-Version:     1.0
+Version:     1.1
 Author:
 start date:
 Description: 通过调用FFmpeg库实现的播放器组件
@@ -27,7 +27,6 @@ Version history
 #include <QMediaDevices>
 #include <QAudioDevice>
 #include <QAudioSink>
-#include <QAudioSource>
 #endif
 #include <QElapsedTimer>
 #include <QLabel>
@@ -43,6 +42,7 @@ extern "C"
 #include <libavutil/channel_layout.h>
 #include <libavutil/opt.h>
 #include <libswscale/swscale.h>
+#include <libavutil/time.h>
 #include <libswresample/swresample.h>
 }
 
@@ -72,7 +72,7 @@ signals:
 public slots:
     void setPaused();
     void seekTo(qint64 posMs);
-    void setVolume(float volume);
+    void setVolume(int volume);
     void setMute();
 
 protected:
@@ -82,17 +82,18 @@ private:
     // 音视频处理
     bool initVideo();
     bool initAudio();
+    bool initAudioOutput();
     void decodeVideoPacket(AVPacket *pkt);
     void decodeAudioPacket(AVPacket *pkt);
     void displayVideoFrame(AVFrame *frame);
     QAudioFormat createAudioFormat() const;
     void applyVolume(uint8_t *data, int len);
 
-    // 同步处理
-    qint64 getMasterClock() const;
-    void updateVideoClock(qint64 pts);
-    void updateAudioClock(qint64 pts);
-
+    // 同步控制
+    double getMasterClock();
+    void updateVideoClock(double pts);
+    void updateAudioClock(double pts);
+    
     // 状态控制
     QMutex m_mutex;
     QWaitCondition m_pauseCondition;
@@ -101,36 +102,39 @@ private:
     bool m_muted = false;
     bool m_seekRequested = false;
     qint64 m_seekPos = 0;
-    float m_volume = 1.0f;
+    int m_volume = 100;
     int m_out_sample_rate = 44100;
 
     // 时间信息
-    QElapsedTimer m_clockTimer;
     qint64 m_videoStartTime = 0;
     qint64 m_firstVideoPts = -1;
+    double m_videoClock = 0;
+    double m_audioClock = 0;
+    qint64 m_lastFrameTime = 0;
+    qint64 m_frameInterval = 40000;
 
-    // FFmpeg相关成员
+    // FFmpeg相关
     AVFormatContext *m_formatCtx = nullptr;
-    struct
+    
+    struct VideoStream
     {
         int streamIndex = -1;
         AVCodecContext *codecCtx = nullptr;
         SwsContext *swsCtx = nullptr;
-        qint64 clock = 0;
     } m_video;
 
-    struct
+    struct AudioStream
     {
         int streamIndex = -1;
         AVCodecContext *codecCtx = nullptr;
         SwrContext *swrCtx = nullptr;
-        qint64 clock = 0;
     #if QT_VERSION_MAJOR < 6
         QAudioOutput *output = nullptr;
     #else
         QAudioSink *output = nullptr;
     #endif
         QIODevice *device = nullptr;
+        int bytesPerSample = 0;
     } m_audio;
 };
 
