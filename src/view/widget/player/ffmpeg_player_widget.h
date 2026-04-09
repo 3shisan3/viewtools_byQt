@@ -1,18 +1,24 @@
 /*****************************************************************
 File:        ffmpeg_player_widget.h
-Version:     1.2
+Version:     2.0
 Author:
 start date:
-Description: 通过调用FFmpeg库实现的播放器组件
+Description: 基于FFmpeg库实现的多线程音视频播放器组件
     主要功能：
-        1. 播放本地视频文件
-        2. 播放网络视频流
-        3. 暂停、停止、快进、快退、音量调节等基本功能
-    优化特性：
-        1. 改进的音视频同步机制
-        2. 音频设备容错处理
-        3. 智能帧缓冲管理
-        4. 性能优化和错误恢复
+        1. 支持本地文件（MP4/AVI/MKV等）和网络流（RTSP/HTTP）播放
+        2. 完整的播放控制：播放、暂停、停止、跳转、音量调节、静音
+        3. 基于音频主时钟的精确音视频同步机制
+        4. 可选帧缓冲队列，支持智能丢帧与缓冲区动态调整
+        5. 网络流自动重连（可配置重试次数与退避延迟）
+        6. 音频设备自适应容错（自动匹配采样率）
+        7. 实时性能统计（帧率、丢帧数、码率、音频欠载）
+        8. 截图保存功能
+    技术特性：
+        1. 解码线程与UI线程分离，避免界面卡顿
+        2. 支持Qt5/Qt6双版本编译
+        3. 音视频时钟同步算法（差值阈值：-50ms~100ms）
+        4. 环形帧缓冲队列，线程安全
+        5. 音频非阻塞写入，缓冲状态信号通知
 
 Version history
 [序号][修改日期][修改者][修改内容]
@@ -25,257 +31,367 @@ Version history
 #define _FFMPEG_PLAYER_WIDGET_H
 
 #include <QAudioFormat>
+#include <QDateTime>
+#include <QElapsedTimer>
+#include <QLabel>
+#include <QMutex>
+#include <QQueue>
+#include <QSemaphore>
+#include <QThread>
+#include <QTimer>
+#include <QWaitCondition>
+#include <QWidget>
+
 #if QT_VERSION_MAJOR < 6
 #include <QAudioOutput>
 #include <QAudioDeviceInfo>
 #else
-#include <QMediaDevices>
 #include <QAudioDevice>
 #include <QAudioSink>
-#include <QAudioSource>
+#include <QMediaDevices>
 #endif
-#include <QElapsedTimer>
-#include <QLabel>
-#include <QMutex>
-#include <QThread>
-#include <QWaitCondition>
-#include <QWidget>
-#include <QQueue>
-#include <QDateTime>
 
 extern "C"
 {
-#include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
+#include <libavutil/imgutils.h>
 #include <libavutil/opt.h>
-#include <libswscale/swscale.h>
 #include <libswresample/swresample.h>
+#include <libswscale/swscale.h>
+#include <libavutil/time.h>
 }
 
 #include "base_player_widget.h"
 
-// 内联定义 AVSyncManager 类
+// ==================== 音视频同步管理器====================
 class AVSyncManager
 {
 public:
-    enum SyncMode {
+    enum SyncMode
+    {
         SYNC_AUDIO_MASTER,   // 音频主时钟（默认）
         SYNC_VIDEO_MASTER,   // 视频主时钟
         SYNC_EXTERNAL_CLOCK  // 外部时钟
     };
-    
-    AVSyncManager() : m_syncMode(SYNC_AUDIO_MASTER) {}
-    
-    /**
-     * @brief 更新音频时钟
-     * @param pts 音频时间戳（微秒）
-     */
-    void updateAudioClock(qint64 pts) {
+
+    AVSyncManager()
+    {
+        reset();
+    }
+
+    /** 更新音频时钟 */
+    void updateAudioClock(qint64 pts)
+    {
         QMutexLocker lock(&m_mutex);
         m_audioClock = pts;
-        m_audioClockUpdated = QDateTime::currentMSecsSinceEpoch();
+        m_audioClockTime = av_gettime_relative();
+        m_audioClockValid = true;
     }
-    
-    /**
-     * @brief 更新视频时钟
-     * @param pts 视频时间戳（微秒）
-     */
-    void updateVideoClock(qint64 pts) {
+
+    /** 更新视频时钟 */
+    void updateVideoClock(qint64 pts)
+    {
         QMutexLocker lock(&m_mutex);
         m_videoClock = pts;
     }
-    
-    /**
-     * @brief 获取主时钟当前值
-     * @return 主时钟时间戳（微秒）
-     */
-    qint64 getMasterClock() const {
+
+    /** 获取当前主时钟值（微秒） */
+    qint64 getCurrentClock() const
+    {
         QMutexLocker lock(&m_mutex);
-        if (m_syncMode == SYNC_AUDIO_MASTER && m_audioClock > 0) {
-            if (m_audioClockUpdated > 0) {
-                // 计算音频时钟的当前值（考虑流逝的时间）
-                qint64 elapsed = QDateTime::currentMSecsSinceEpoch() - m_audioClockUpdated;
-                return m_audioClock + elapsed * 1000; // 转为微秒
-            }
-            return m_audioClock;
-        }
-        return m_videoClock;
-    }
-    
-    /**
-     * @brief 计算视频帧的显示延迟
-     * @param videoPts 视频帧时间戳（微秒）
-     * @return 延迟时间（微秒），-1表示需要丢弃帧
-     */
-    qint64 calculateFrameDelay(qint64 videoPts) {
-        qint64 clock = getMasterClock();
-        if (clock <= 0) {
-            return 0; // 主时钟未就绪
+        
+        if (m_syncMode == SYNC_AUDIO_MASTER && m_audioClockValid)
+        {
+            // 音频时钟 = 上次PTS + 经过的时间
+            qint64 elapsed = av_gettime_relative() - m_audioClockTime;
+            return m_audioClock + elapsed;
         }
         
-        qint64 diff = videoPts - clock;
-        
-        // 同步阈值配置
-        const qint64 SYNC_THRESHOLD = 10000;    // 10ms，理想同步范围
-        const qint64 SYNC_FRAMEDROP = 100000;   // 100ms，超过此值丢弃帧
-        
-        if (diff < -SYNC_FRAMEDROP) {
-            // 视频落后超过100ms，丢弃此帧
-            return -1;
-        } else if (diff < -SYNC_THRESHOLD) {
-            // 视频落后10-100ms，不延迟
-            return 0;
-        } else if (diff > SYNC_THRESHOLD) {
-            // 视频超前超过10ms，需要延迟
-            return diff;
+        // 视频主时钟模式
+        if (m_videoClock > 0)
+        {
+            return m_videoClock;
         }
-        // 在同步阈值内，正常显示
+        
         return 0;
     }
-    
+
     /**
-     * @brief 设置同步模式
-     * @param mode 同步模式
+     * 计算视频帧需要等待的时间
+     * @param videoPts 视频帧的PTS（微秒）
+     * @param frameDuration 帧持续时间（微秒）
+     * @return 需要等待的微秒数，返回0表示立即显示，返回-1表示应该丢弃
      */
-    void setSyncMode(SyncMode mode) {
+    qint64 calculateWaitTime(qint64 videoPts, qint64 frameDuration)
+    {
+        QMutexLocker lock(&m_mutex);
+        
+        // 如果没有有效的音频时钟，使用帧间隔控制
+        if (!m_audioClockValid)
+        {
+            if (m_lastFrameTime > 0)
+            {
+                qint64 elapsed = av_gettime_relative() - m_lastFrameTime;
+                if (elapsed < frameDuration)
+                {
+                    return frameDuration - elapsed;
+                }
+            }
+            return 0;
+        }
+        
+        // 获取当前主时钟值
+        qint64 elapsed = av_gettime_relative() - m_audioClockTime;
+        qint64 currentClock = m_audioClock + elapsed;
+        
+        // 计算差值：视频PTS - 音频时钟
+        // 正数表示视频超前，需要等待
+        // 负数表示视频落后，可能丢弃或立即显示
+        qint64 diff = videoPts - currentClock;
+        
+        // 同步参数
+        const qint64 MAX_DIFF = 100000;      // 最大差值100ms，超过则丢帧
+        const qint64 MIN_DIFF = -50000;      // 最小差值-50ms，落后超过50ms丢帧
+        const qint64 SYNC_THRESHOLD = 10000; // 10ms内视为同步
+        
+        if (diff > MAX_DIFF)
+        {
+            // 视频超前太多，限制最大等待时间
+            return MAX_DIFF;
+        }
+        
+        if (diff < MIN_DIFF)
+        {
+            // 视频落后太多，丢弃这一帧
+            return -1;
+        }
+        
+        if (diff > SYNC_THRESHOLD)
+        {
+            // 视频超前，需要等待
+            return diff;
+        }
+        
+        // 在同步范围内，立即显示
+        return 0;
+    }
+
+    /** 设置同步模式 */
+    void setSyncMode(SyncMode mode)
+    {
         QMutexLocker lock(&m_mutex);
         m_syncMode = mode;
     }
-    
-    /**
-     * @brief 获取同步模式
-     */
-    SyncMode getSyncMode() const {
-        QMutexLocker lock(&m_mutex);
-        return m_syncMode;
-    }
-    
-    /**
-     * @brief 重置所有时钟
-     */
-    void reset() {
+
+    /** 重置所有时钟 */
+    void reset()
+    {
         QMutexLocker lock(&m_mutex);
         m_audioClock = 0;
         m_videoClock = 0;
-        m_audioClockUpdated = 0;
+        m_audioClockTime = 0;
+        m_audioClockValid = false;
+        m_lastFrameTime = 0;
     }
-    
+
+    /** 记录帧已显示（用于无音频时的帧间隔控制） */
+    void frameDisplayed()
+    {
+        QMutexLocker lock(&m_mutex);
+        m_lastFrameTime = av_gettime_relative();
+    }
+
+    /** 检查音频时钟是否有效 */
+    bool isAudioClockValid() const
+    {
+        QMutexLocker lock(&m_mutex);
+        return m_audioClockValid;
+    }
+
 private:
     mutable QMutex m_mutex;
-    SyncMode m_syncMode;
-    qint64 m_audioClock = 0;      // 音频时钟（微秒）
-    qint64 m_videoClock = 0;      // 视频时钟（微秒）
-    qint64 m_audioClockUpdated = 0; // 音频时钟最后更新时间（毫秒）
+    SyncMode m_syncMode = SYNC_AUDIO_MASTER;
+    
+    // 音频时钟
+    qint64 m_audioClock = 0;
+    qint64 m_audioClockTime = 0;
+    bool m_audioClockValid = false;
+    
+    // 视频时钟
+    qint64 m_videoClock = 0;
+    
+    // 帧间隔控制
+    qint64 m_lastFrameTime = 0;
 };
 
-// 内联定义 FrameBuffer 类
-class FrameBuffer
+// ==================== 帧缓冲区 ====================
+class OptionalFrameBuffer
 {
 public:
-    struct VideoFrame {
-        QImage image;           // 视频帧图像
-        qint64 pts;            // 时间戳（微秒）
-        qint64 duration;       // 帧显示时长（微秒）
-        
-        VideoFrame() : pts(0), duration(0) {}
-        VideoFrame(const QImage &img, qint64 p, qint64 dur) 
-            : image(img), pts(p), duration(dur) {}
-        
+    struct VideoFrame
+    {
+        QImage image;
+        qint64 pts;         // 时间戳（微秒）
+        qint64 duration;    // 帧持续时间（微秒）
+
+        VideoFrame() : pts(0), duration(40000) {}
+        VideoFrame(const QImage &img, qint64 p, qint64 d = 40000)
+            : image(img), pts(p), duration(d) {}
+
         bool isValid() const { return !image.isNull() && pts >= 0; }
     };
-    
-    FrameBuffer(int maxSize = 30) : m_maxSize(maxSize) {}
-    
-    /**
-     * @brief 向缓冲区添加帧
-     * @param frame 视频帧
-     * @return true 添加成功
-     */
-    bool push(const VideoFrame &frame) {
+
+    explicit OptionalFrameBuffer(int maxSize = 15) : m_maxSize(maxSize), m_droppedFrames(0) {}
+
+    bool push(const VideoFrame &frame)
+    {
         QMutexLocker lock(&m_mutex);
-        if (m_frames.size() >= m_maxSize) {
-            // 缓冲区已满，丢弃最老的一帧
+        if (m_frames.size() >= m_maxSize && m_maxSize > 0)
+        {
             m_frames.dequeue();
             m_droppedFrames++;
         }
         m_frames.enqueue(frame);
-        m_condition.wakeOne();  // 唤醒等待的消费者
+        m_condition.wakeOne();
         return true;
     }
-    
-    /**
-     * @brief 从缓冲区获取帧
-     * @param timeoutMs 等待超时时间（毫秒）
-     * @return 视频帧，如果超时返回无效帧
-     */
-    VideoFrame pop(int timeoutMs = 100) {
+
+    VideoFrame pop(int timeoutMs = 10)
+    {
         QMutexLocker lock(&m_mutex);
-        if (m_frames.isEmpty() && timeoutMs > 0) {
+        if (m_frames.isEmpty() && timeoutMs > 0)
+        {
             m_condition.wait(&m_mutex, timeoutMs);
         }
         return m_frames.isEmpty() ? VideoFrame() : m_frames.dequeue();
     }
-    
-    /**
-     * @brief 清空缓冲区
-     */
-    void clear() {
+
+    void smartClear(int keepCount = 1)
+    {
+        QMutexLocker lock(&m_mutex);
+        while (m_frames.size() > keepCount)
+        {
+            m_frames.dequeue();
+        }
+    }
+
+    void clear()
+    {
         QMutexLocker lock(&m_mutex);
         m_frames.clear();
         m_droppedFrames = 0;
     }
-    
-    /**
-     * @brief 获取缓冲区大小
-     */
-    int size() const {
+
+    int size() const
+    {
         QMutexLocker lock(&m_mutex);
         return m_frames.size();
     }
-    
-    /**
-     * @brief 检查缓冲区是否为空
-     */
-    bool isEmpty() const {
+
+    bool isEnabled() const { return m_maxSize > 0; }
+    int droppedFrames() const { return m_droppedFrames; }
+
+    void setMaxSize(int size)
+    {
         QMutexLocker lock(&m_mutex);
-        return m_frames.isEmpty();
+        m_maxSize = qMax(0, size);
+        if (m_maxSize == 0) m_frames.clear();
     }
-    
-    /**
-     * @brief 获取丢弃的帧数
-     */
-    int droppedFrames() const {
-        QMutexLocker lock(&m_mutex);
-        return m_droppedFrames;
-    }
-    
-    /**
-     * @brief 设置缓冲区最大大小
-     * @param size 最大帧数
-     */
-    void setMaxSize(int size) {
-        QMutexLocker lock(&m_mutex);
-        m_maxSize = qMax(1, size);
-    }
-    
-    /**
-     * @brief 获取缓冲区容量使用率
-     * @return 0.0-1.0的使用率
-     */
-    float usage() const {
-        QMutexLocker lock(&m_mutex);
-        return m_maxSize > 0 ? static_cast<float>(m_frames.size()) / m_maxSize : 0.0f;
-    }
-    
+
 private:
-    QQueue<VideoFrame> m_frames;       // 帧队列
-    mutable QMutex m_mutex;            // 互斥锁
-    QWaitCondition m_condition;        // 条件变量
-    int m_maxSize;                     // 最大缓冲区大小
-    int m_droppedFrames = 0;           // 丢弃的帧数
+    QQueue<VideoFrame> m_frames;
+    mutable QMutex m_mutex;
+    QWaitCondition m_condition;
+    int m_maxSize;
+    int m_droppedFrames;
 };
 
+// ==================== 音频写入辅助类 ====================
+class AudioWriter
+{
+public:
+    AudioWriter() : m_device(nullptr), m_audioOutput(nullptr), m_running(true) {}
+    ~AudioWriter() { stop(); }
+
+    void setDevice(QIODevice *device, QObject *audioOutput)
+    {
+        QMutexLocker lock(&m_mutex);
+        m_device = device;
+        m_audioOutput = audioOutput;
+        m_bufferAvailable.release();
+    }
+
+    void stop()
+    {
+        QMutexLocker lock(&m_mutex);
+        m_running = false;
+        m_bufferAvailable.release();
+        m_device = nullptr;
+        m_audioOutput = nullptr;
+    }
+
+    bool write(const uint8_t *data, int size, int timeoutMs = 100)
+    {
+        QMutexLocker lock(&m_mutex);
+        if (!m_device || !m_audioOutput || !m_running) return false;
+
+        int written = 0;
+        while (written < size && m_running)
+        {
+            int freeBytes = getFreeBytes();
+            if (freeBytes <= 0)
+            {
+                lock.unlock();
+                bool signaled = m_bufferAvailable.tryAcquire(1, timeoutMs);
+                lock.relock();
+                if (!signaled && !m_running) return false;
+                continue;
+            }
+
+            int toWrite = qMin(size - written, freeBytes);
+            int w = m_device->write(reinterpret_cast<const char*>(data + written), toWrite);
+            if (w > 0)
+            {
+                written += w;
+            }
+            else
+            {
+                return false;
+            }
+        }
+        return written == size;
+    }
+
+    void notifyBufferReady()
+    {
+        m_bufferAvailable.release();
+    }
+
+    void start() { m_running = true; }
+
+private:
+    int getFreeBytes()
+    {
+        if (!m_audioOutput) return 0;
+#if QT_VERSION_MAJOR < 6
+        QAudioOutput *output = static_cast<QAudioOutput*>(m_audioOutput);
+        return output ? output->bytesFree() : 0;
+#else
+        QAudioSink *sink = static_cast<QAudioSink*>(m_audioOutput);
+        return sink ? sink->bytesFree() : 0;
+#endif
+    }
+
+    QMutex m_mutex;
+    QSemaphore m_bufferAvailable{0};
+    QIODevice *m_device;
+    QObject *m_audioOutput;
+    bool m_running;
+};
+
+// ==================== 解码线程 ====================
 class FFmpegDecoderThread : public QThread
 {
     Q_OBJECT
@@ -288,124 +404,202 @@ public:
     void close(bool waitForFinished = true);
     qint64 duration() const;
     bool isPaused() const;
-    
+
     // 播放控制
     void setPaused();
     void seekTo(qint64 posMs);
-    void setVolume(float volume);
+    void setVolume(int volume);
     void setMute();
 
+    // 配置
+    void setFrameBufferEnabled(bool enabled);
+    void setMaxBufferSize(int size);
+    void setAutoReconnect(bool enabled, int maxRetries = 3);
+
+    // 截图
+    bool takeScreenshot(const QString &filePath);
+
+    // 统计信息
+    struct Statistics {
+        int totalFramesDecoded = 0;
+        int totalFramesDisplayed = 0;
+        int droppedFrames = 0;
+        int reconnectCount = 0;
+        int audioUnderrunCount = 0;
+        qint64 currentBitrate = 0;
+    };
+    Statistics getStatistics() const;
+
 signals:
-    // 视频相关信号
+    /** 
+     * 视频帧就绪信号
+     * @param image 解码后的RGB32格式视频帧，可直接用于显示
+     * @note 该信号在解码线程中发出，建议使用Qt::QueuedConnection连接
+     */
     void frameReady(const QImage &image);
+    /** 
+     * 播放位置变化信号
+     * @param pos 当前播放位置（毫秒）
+     * @note 根据视频帧PTS或音频时钟计算得出
+     */
     void positionChanged(qint64 pos);
-    
-    // 音频相关信号
-    void volumeChanged(int volume);
-    void muteStateChanged(bool isMute);
-    
-    // 状态相关信号
+    /** 
+     * 媒体总时长变化信号
+     * @param duration 媒体总时长（毫秒），0表示无法获取
+     * @note 在成功打开媒体文件后发出
+     */
     void durationChanged(qint64 duration);
+    /** 
+     * 播放状态变化信号
+     * @param state 播放状态：PlayingState（播放中）、PausedState（暂停）、StoppedState（停止）
+     */
     void playStateChanged(PlayerWidgetBase::PlayState state);
+    /** 
+     * 音量变化信号
+     * @param volume 当前音量值（0-100）
+     */
+    void volumeChanged(int volume);
+    /** 
+     * 静音状态变化信号
+     * @param isMute true-静音开启，false-静音关闭
+     */
+    void muteStateChanged(bool isMute);
+    /** 
+     * 错误发生信号
+     * @param message 错误描述信息（用户可读）
+     * @note 包括：打开文件失败、解码错误、重连失败等
+     */
     void errorOccurred(const QString &message);
-    
-    // 性能监控信号
+    /** 
+     * 缓冲区状态变化信号
+     * @param usagePercent 缓冲区使用率（0-100），基于最大容量计算
+     * @param droppedFrames 累计丢帧数（因缓冲区满而被丢弃的帧数）
+     * @note 每秒更新一次，用于监控播放器健康状态
+     */
     void bufferStatusChanged(int usagePercent, int droppedFrames);
+    /** 
+     * 网络重连中信号
+     * @param attempt 当前第几次重连尝试（从1开始）
+     * @param maxRetries 最大重试次数
+     * @note 仅网络流且启用自动重连时触发
+     */
+    void networkReconnecting(int attempt, int maxRetries);
+    /** 
+     * 网络重连成功信号
+     * @note 重连成功后恢复播放，并重置重连计数器
+     */
+    void networkReconnected();
+    /** 
+     * 统计信息更新信号
+     * @param stats 统计数据结构体，包含以下字段：
+     *        - totalFramesDecoded: 累计解码帧数
+     *        - totalFramesDisplayed: 累计显示帧数
+     *        - droppedFrames: 累计丢帧数
+     *        - reconnectCount: 重连成功次数
+     *        - audioUnderrunCount: 音频欠载次数
+     *        - currentBitrate: 当前实时码率（bps）
+     * @note 每秒更新一次，用于性能监控和调试
+     */
+    void statisticsUpdated(const Statistics &stats);
 
 protected:
     void run() override;
 
 private:
-    // 音视频初始化
     bool initVideo();
     bool initAudio();
+    bool initAudioOutput();
     QAudioFormat createAudioFormat() const;
-    
-    // 解码处理
+    bool reconnectMedia();
+    void updateFrameRate();
+
     void decodeVideoPacket(AVPacket *pkt);
     void decodeAudioPacket(AVPacket *pkt);
-    
-    // 帧处理
-    void processVideoFrame(AVFrame *frame);
+    void processVideoFrameDirect(AVFrame *frame);
+    void processVideoFrameBuffered(AVFrame *frame);
     QImage convertFrameToImage(AVFrame *frame);
-    
-    // 音视频同步
-    qint64 getMasterClock() const;
-    void updateVideoClock(qint64 pts);
-    void updateAudioClock(qint64 pts);
-    
-    // 音频处理
-    void applyVolume(uint8_t *data, int len);
-    bool writeAudioData(const uint8_t *data, qint64 size);
-    
-    // 辅助函数
-    void adjustVideoClock(qint64 adjustment);
-    void updatePerformanceStats();
-    void cleanupResources();
 
-    // 同步管理
-    AVSyncManager m_syncManager;
-    
-    // 状态控制
+    void writeAudioData(const uint8_t *data, int size);
+    void applyVolume(int16_t *samples, int count);
+    void cleanupResources();
+    void updatePerformanceStats();
+
+    // 状态变量
     QMutex m_mutex;
     QWaitCondition m_pauseCondition;
     bool m_running = false;
     bool m_paused = false;
     bool m_muted = false;
-    bool m_hasAudio = false;          // 音频是否可用
+    bool m_hasAudio = false;
     bool m_seekRequested = false;
     qint64 m_seekPos = 0;
-    float m_volume = 1.0f;
+    int m_volume = 100;
     int m_out_sample_rate = 44100;
-    
+
+    // 重连相关
+    bool m_autoReconnect = false;
+    int m_maxReconnectRetries = 3;
+    int m_currentReconnectAttempt = 0;
+    bool m_isReconnecting = false;
+
     // 时间信息
-    QElapsedTimer m_clockTimer;
-    qint64 m_videoStartTime = 0;
-    qint64 m_firstVideoPts = -1;
     qint64 m_lastDisplayTime = 0;
-    
-    // 缓冲区管理
-    FrameBuffer m_frameBuffer;
-    int m_maxBufferSize = 30;         // 最大缓冲区帧数
-    
-    // 性能统计
-    int m_totalFramesDecoded = 0;
-    int m_totalFramesDisplayed = 0;
-    int m_droppedFrames = 0;
-    qint64 m_lastStatUpdate = 0;
-    
-    // FFmpeg相关成员
+    qint64 m_frameInterval = 40000; // 帧间隔（微秒）
+    qint64 m_lastVideoPts = 0;      // 上一帧PTS，用于计算帧间隔
+    qint64 m_firstVideoPts = -1;    // 首帧PTS
+    qint64 m_startTime = 0;         // 开始播放的系统时间
+
+    // 同步管理
+    AVSyncManager m_syncManager;
+    QString m_currentUrl;
+
+    // 缓冲区
+    OptionalFrameBuffer m_frameBuffer;
+    bool m_useBuffer = true;
+
+    // 内存复用
+    uint8_t *m_rgbBuffer = nullptr;
+    int m_rgbBufferSize = 0;
+
+    // 音频写入优化
+    AudioWriter m_audioWriter;
+    QTimer *m_audioBufferTimer = nullptr;
+
+    // 统计信息
+    Statistics m_stats;
+    qint64 m_lastStatTime = 0;
+    qint64 m_lastBitrateCalcTime = 0;
+    qint64 m_lastBitrateBytes = 0;
+
+    // FFmpeg上下文
     AVFormatContext *m_formatCtx = nullptr;
-    
-    struct VideoContext
+
+    struct
     {
         int streamIndex = -1;
         AVCodecContext *codecCtx = nullptr;
         SwsContext *swsCtx = nullptr;
-        qint64 clock = 0;
         AVRational frameRate = {0, 0};
-        int width = 0;
-        int height = 0;
+        AVRational timeBase = {0, 0};
+        int width = 0, height = 0;
     } m_video;
-    
-    struct AudioContext
+
+    struct
     {
         int streamIndex = -1;
         AVCodecContext *codecCtx = nullptr;
         SwrContext *swrCtx = nullptr;
-        qint64 clock = 0;
-    #if QT_VERSION_MAJOR < 6
+        AVRational timeBase = {0, 0};
+#if QT_VERSION_MAJOR < 6
         QAudioOutput *output = nullptr;
-    #else
+#else
         QAudioSink *output = nullptr;
-    #endif
+#endif
         QIODevice *device = nullptr;
-        bool deviceReady = false;
     } m_audio;
-    
-    QString m_currentUrl; // 存储当前URL
 };
 
+// ==================== 播放器Widget ====================
 class FFmpegPlayer : public QWidget
 {
     Q_OBJECT
@@ -416,33 +610,34 @@ public:
     PlayerWidgetBase *PlayerCore() const;
     void stop();
 
+    void setFrameBufferEnabled(bool enabled);
+    void setMaxBufferSize(int size);
+    void setAutoReconnect(bool enabled, int maxRetries = 3);
+    bool takeScreenshot(const QString &filePath);
+    FFmpegDecoderThread::Statistics getStatistics() const;
+
 public slots:
     void play(const QString &url);
     void updateFrame(const QImage &image);
-    
-    // 性能监控槽
     void onBufferStatusChanged(int usagePercent, int droppedFrames);
+    void onNetworkReconnecting(int attempt, int maxRetries);
+    void onStatisticsUpdated(const FFmpegDecoderThread::Statistics &stats);
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
-    
-    // 显示事件处理
     void paintEvent(QPaintEvent *event) override;
-    bool event(QEvent *event) override;
 
 private:
     void setupConnections();
-    void updateDisplayLabel();
+    void updateDisplay();
 
     QLabel *m_displayLabel_;
     PlayerWidgetBase *m_playerCore_;
     FFmpegDecoderThread *m_decoder_;
-    
-    // 当前显示帧
+
     QImage m_currentFrame;
-    mutable QMutex m_frameMutex;
+    QMutex m_frameMutex;
 };
 
 #endif // _FFMPEG_PLAYER_WIDGET_H
-
 #endif // CAN_USE_FFMPEG
