@@ -39,6 +39,7 @@ signals:
     void playStateChanged(PlayState state);         // 播放状态变化
     void currentVolume(int volume);                 // 当前音量
     void muteStateChanged(bool isMute);             // 静音状态变化
+    void currentPlaybackRate(float rate);           // 当前播放倍速
 
     // 显示窗口 -> 播放控件
     void setPlayerFile(const QString &filePath);    // 指定播放文件
@@ -46,6 +47,7 @@ signals:
     // 播放控制
     void changePlayState();                         // 改变一次当前播放状态
     void seekPlay(long long pos);                   // 跳转播放位置
+    void setPlaybackRate(float rate);               // 控制视频倍速播放
     // 音量控制
     void changeMuteState();                         // 改变一次当前音量状态
     void setVolume(int volume);                     // 设置音量

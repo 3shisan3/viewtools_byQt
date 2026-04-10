@@ -1,11 +1,14 @@
 #ifdef CAN_USE_FFMPEG
 
 #include "ffmpeg_player_widget.h"
+
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
 #include <QPainter>
 #include <QResizeEvent>
+
+#include <cmath>
 
 // FFmpeg日志回调
 static void ffmpegLogCallback(void *, int level, const char *fmt, va_list vl)
@@ -22,7 +25,7 @@ static void ffmpegLogCallback(void *, int level, const char *fmt, va_list vl)
 
 FFmpegDecoderThread::FFmpegDecoderThread(QObject *parent)
     : QThread(parent)
-    , m_frameBuffer(15) // 默认15帧缓冲区
+    , m_frameBuffer(15)
     , m_lastVideoPts(0)
     , m_firstVideoPts(-1)
     , m_startTime(0)
@@ -76,7 +79,155 @@ void FFmpegDecoderThread::setAutoReconnect(bool enabled, int maxRetries)
 
 FFmpegDecoderThread::Statistics FFmpegDecoderThread::getStatistics() const
 {
-    return m_stats;
+    Statistics stats = m_stats;
+    stats.currentPlaybackRate = m_playbackRate;
+    return stats;
+}
+
+// ==================== 倍速播放核心实现 ====================
+
+void FFmpegDecoderThread::setPlaybackRate(float rate)
+{
+    // 限制倍速范围 0.5x ~ 2.0x
+    rate = qBound(0.5f, rate, 2.0f);
+    
+    QMutexLocker lock(&m_mutex);
+    if (qFabs(m_playbackRate - rate) < 0.01f) return;  // 变化小于1%忽略
+    
+    m_playbackRate = rate;
+    m_stats.currentPlaybackRate = rate;
+    
+    qDebug() << "Playback rate changed to:" << rate << "x";
+    
+    // 如果有音频，需要重新初始化音频输出以改变采样率
+    if (m_hasAudio && m_audio.output)
+    {
+        m_needReinitAudio = true;
+    }
+    
+    emit playbackRateChanged(rate);
+}
+
+void FFmpegDecoderThread::reinitAudioOutput()
+{
+    if (!m_hasAudio || !m_audio.output) return;
+    
+    qDebug() << "Reinitializing audio output for playback rate:" << m_playbackRate;
+    
+    // 停止当前音频输出
+    m_audioWriter.stop();
+    if (m_audio.output)
+    {
+        m_audio.output->stop();
+    }
+    
+    // 计算新的目标采样率：原始采样率 * 倍速
+    // 例如：原始44100Hz，2倍速 -> 88200Hz，0.5倍速 -> 22050Hz
+    int newSampleRate = static_cast<int>(m_audio.originalSampleRate * m_playbackRate);
+    // 限制采样率范围（常见音频设备支持范围）
+    newSampleRate = qBound(8000, newSampleRate, 192000);
+    
+    if (newSampleRate == m_out_sample_rate && m_audio.targetSampleRate == newSampleRate)
+    {
+        // 采样率没变，只需重启音频
+        if (m_audio.output)
+        {
+            m_audio.device = m_audio.output->start();
+            if (m_audio.device)
+            {
+                m_audioWriter.setDevice(m_audio.device, m_audio.output);
+                m_audioWriter.start();
+            }
+        }
+        return;
+    }
+    
+    m_out_sample_rate = newSampleRate;
+    m_audio.targetSampleRate = newSampleRate;
+    
+    // 重新创建音频格式
+    QAudioFormat format = createAudioFormat();
+    
+#if QT_VERSION_MAJOR < 6
+    QAudioDeviceInfo deviceInfo = QAudioDeviceInfo::defaultOutputDevice();
+    if (deviceInfo.isNull()) return;
+    
+    if (!deviceInfo.isFormatSupported(format))
+    {
+        // 尝试查找支持的采样率
+        int rates[] = {newSampleRate, 48000, 44100, 32000, 24000, 22050, 16000};
+        bool found = false;
+        for (int sr : rates)
+        {
+            format.setSampleRate(sr);
+            if (deviceInfo.isFormatSupported(format))
+            {
+                m_out_sample_rate = sr;
+                m_audio.targetSampleRate = sr;
+                found = true;
+                break;
+            }
+        }
+        if (!found) format = deviceInfo.nearestFormat(format);
+    }
+    
+    delete m_audio.output;
+    m_audio.output = new QAudioOutput(deviceInfo, format, this);
+#else
+    QAudioDevice deviceInfo = QMediaDevices::defaultAudioOutput();
+    if (deviceInfo.isNull()) return;
+    
+    if (!deviceInfo.isFormatSupported(format))
+    {
+        int rates[] = {newSampleRate, 48000, 44100, 32000, 24000, 22050, 16000};
+        bool found = false;
+        for (int sr : rates)
+        {
+            format.setSampleRate(sr);
+            if (deviceInfo.isFormatSupported(format))
+            {
+                m_out_sample_rate = sr;
+                m_audio.targetSampleRate = sr;
+                found = true;
+                break;
+            }
+        }
+        if (!found) return;
+    }
+    
+    delete m_audio.output;
+    m_audio.output = new QAudioSink(deviceInfo, format, this);
+#endif
+    
+    m_audio.device = m_audio.output->start();
+    if (m_audio.device)
+    {
+        m_audioWriter.setDevice(m_audio.device, m_audio.output);
+        m_audioWriter.start();
+    }
+    
+    // 重新配置重采样器以适应新的采样率
+    if (m_audio.swrCtx)
+    {
+        swr_free(&m_audio.swrCtx);
+        m_audio.swrCtx = swr_alloc();
+        if (m_audio.swrCtx)
+        {
+            av_opt_set_chlayout(m_audio.swrCtx, "in_chlayout", &m_audio.codecCtx->ch_layout, 0);
+            av_opt_set_int(m_audio.swrCtx, "in_sample_rate", m_audio.codecCtx->sample_rate, 0);
+            av_opt_set_sample_fmt(m_audio.swrCtx, "in_sample_fmt", m_audio.codecCtx->sample_fmt, 0);
+            
+            AVChannelLayout out_layout = AV_CHANNEL_LAYOUT_STEREO;
+            av_opt_set_chlayout(m_audio.swrCtx, "out_chlayout", &out_layout, 0);
+            av_opt_set_int(m_audio.swrCtx, "out_sample_rate", m_out_sample_rate, 0);
+            av_opt_set_sample_fmt(m_audio.swrCtx, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
+            
+            swr_init(m_audio.swrCtx);
+        }
+    }
+    
+    qDebug() << "Audio reinitialized - Target sample rate:" << m_out_sample_rate 
+             << "Playback rate:" << m_playbackRate;
 }
 
 bool FFmpegDecoderThread::openMedia(const QString &url)
@@ -92,8 +243,11 @@ bool FFmpegDecoderThread::openMedia(const QString &url)
     m_lastVideoPts = 0;
     m_firstVideoPts = -1;
     m_startTime = 0;
+    m_playbackRate = 1.0f;      // 重置倍速
+    m_needReinitAudio = false;
 
     m_stats = Statistics();
+    m_stats.currentPlaybackRate = 1.0f;
     m_lastBitrateCalcTime = av_gettime_relative();
     m_lastBitrateBytes = 0;
 
@@ -193,6 +347,12 @@ bool FFmpegDecoderThread::reconnectMedia()
 
     if (openMedia(m_currentUrl))
     {
+        // 恢复倍速设置
+        if (m_playbackRate != 1.0f)
+        {
+            setPlaybackRate(m_playbackRate);
+        }
+        
         if (currentPos > 0)
         {
             seekTo(currentPos);
@@ -341,7 +501,15 @@ bool FFmpegDecoderThread::initAudio()
         return true;
     }
 
+    // 保存原始采样率
+    m_audio.originalSampleRate = m_audio.codecCtx->sample_rate;
     m_audio.timeBase = m_formatCtx->streams[m_audio.streamIndex]->time_base;
+    
+    // 根据当前倍速计算目标采样率
+    m_out_sample_rate = static_cast<int>(m_audio.originalSampleRate * m_playbackRate);
+    m_out_sample_rate = qBound(8000, m_out_sample_rate, 192000);
+    m_audio.targetSampleRate = m_out_sample_rate;
+    
     // 初始化重采样器
     m_audio.swrCtx = swr_alloc();
     if (!m_audio.swrCtx)
@@ -389,7 +557,7 @@ bool FFmpegDecoderThread::initAudioOutput()
 
     if (!deviceInfo.isFormatSupported(format))
     {
-        int rates[] = {48000, 44100, 32000, 24000, 22050, 16000};
+        int rates[] = {m_out_sample_rate, 48000, 44100, 32000, 24000, 22050, 16000};
         bool found = false;
         for (int sr : rates)
         {
@@ -397,6 +565,7 @@ bool FFmpegDecoderThread::initAudioOutput()
             if (deviceInfo.isFormatSupported(format))
             {
                 m_out_sample_rate = sr;
+                m_audio.targetSampleRate = sr;
                 found = true;
                 break;
             }
@@ -412,7 +581,7 @@ bool FFmpegDecoderThread::initAudioOutput()
     if (!deviceInfo.isFormatSupported(format))
     {
         // 尝试常见采样率
-        int rates[] = {48000, 44100, 32000, 24000, 22050, 16000};
+        int rates[] = {m_out_sample_rate, 48000, 44100, 32000, 24000, 22050, 16000};
         bool found = false;
         for (int sr : rates)
         {
@@ -420,6 +589,7 @@ bool FFmpegDecoderThread::initAudioOutput()
             if (deviceInfo.isFormatSupported(format))
             {
                 m_out_sample_rate = sr;
+                m_audio.targetSampleRate = sr;
                 found = true;
                 break;
             }
@@ -535,6 +705,13 @@ void FFmpegDecoderThread::run()
                 m_pauseCondition.wait(&m_mutex);
             }
         }
+        
+        // 处理倍速变化导致的音频重初始化
+        if (m_needReinitAudio && m_hasAudio)
+        {
+            m_needReinitAudio = false;
+            reinitAudioOutput();
+        }
 
         // 处理跳转
         if (m_seekRequested)
@@ -612,8 +789,8 @@ void FFmpegDecoderThread::run()
                 
                 if (m_hasAudio && m_syncManager.isAudioClockValid())
                 {
-                    // 有音频且音频时钟有效：使用音频时钟同步
-                    waitTime = m_syncManager.calculateWaitTime(frame.pts, frame.duration);
+                    // 有音频且音频时钟有效：使用音频时钟同步，传入倍速参数
+                    waitTime = m_syncManager.calculateWaitTime(frame.pts, frame.duration, m_playbackRate);
                 }
                 else if (m_hasAudio && !m_syncManager.isAudioClockValid())
                 {
@@ -622,7 +799,8 @@ void FFmpegDecoderThread::run()
                 }
                 else
                 {
-                    // 无音频：使用系统时钟同步
+                    // 无音频：使用系统时钟同步，根据倍速调整帧间隔
+                    qint64 adjustedDuration = static_cast<qint64>(frame.duration / m_playbackRate);
                     if (firstPts < 0)
                     {
                         firstPts = frame.pts;
@@ -631,15 +809,15 @@ void FFmpegDecoderThread::run()
                     }
                     else
                     {
-                        qint64 expectedTime = systemStartTime + (frame.pts - firstPts);
+                        qint64 expectedTime = systemStartTime + 
+                            static_cast<qint64>((frame.pts - firstPts) / m_playbackRate);
                         qint64 currentTime = av_gettime_relative();
                         waitTime = expectedTime - currentTime;
                         
-                        // 限制等待和丢弃范围
-                        if (waitTime > frame.duration * 2)
-                            waitTime = frame.duration * 2;
-                        if (waitTime < -frame.duration)
-                            waitTime = -1;  // 丢弃
+                        if (waitTime > adjustedDuration * 2)
+                            waitTime = adjustedDuration * 2;
+                        if (waitTime < -adjustedDuration)
+                            waitTime = -1;
                     }
                 }
                 
@@ -652,8 +830,7 @@ void FFmpegDecoderThread::run()
                 if (waitTime > 0)
                 {
                     // 限制最大等待时间，避免长时间阻塞
-                    waitTime = qMin(waitTime, frame.duration * 2);
-                    // 使用更精确的睡眠
+                    waitTime = qMin(waitTime, static_cast<qint64>(frame.duration / m_playbackRate) * 2);
                     if (waitTime < 10000)
                     {
                         QThread::usleep(static_cast<unsigned long>(waitTime));
@@ -678,6 +855,7 @@ void FFmpegDecoderThread::run()
         {
             updatePerformanceStats();
             m_lastStatTime = now;
+            m_stats.currentPlaybackRate = m_playbackRate;
             emit statisticsUpdated(m_stats);
         }
 
@@ -751,29 +929,31 @@ void FFmpegDecoderThread::processVideoFrameDirect(AVFrame *frame)
     
     if (m_hasAudio && m_syncManager.isAudioClockValid())
     {
-        waitTime = m_syncManager.calculateWaitTime(pts, frameDuration);
+        waitTime = m_syncManager.calculateWaitTime(pts, frameDuration, m_playbackRate);
     }
     else if (m_hasAudio && !m_syncManager.isAudioClockValid())
     {
-        // 音频时钟尚未建立，按帧间隔显示
+        // 音频时钟尚未建立，按帧间隔显示（考虑倍速）
+        qint64 adjustedDuration = static_cast<qint64>(frameDuration / m_playbackRate);
         if (m_lastDisplayTime > 0)
         {
             qint64 elapsed = av_gettime_relative() - m_lastDisplayTime;
-            if (elapsed < frameDuration)
+            if (elapsed < adjustedDuration)
             {
-                waitTime = frameDuration - elapsed;
+                waitTime = adjustedDuration - elapsed;
             }
         }
     }
     else
     {
-        // 无音频：使用帧间隔控制
+        // 无音频：使用帧间隔控制（考虑倍速）
+        qint64 adjustedDuration = static_cast<qint64>(frameDuration / m_playbackRate);
         if (m_lastDisplayTime > 0)
         {
             qint64 elapsed = av_gettime_relative() - m_lastDisplayTime;
-            if (elapsed < frameDuration)
+            if (elapsed < adjustedDuration)
             {
-                waitTime = frameDuration - elapsed;
+                waitTime = adjustedDuration - elapsed;
             }
         }
     }
@@ -786,7 +966,7 @@ void FFmpegDecoderThread::processVideoFrameDirect(AVFrame *frame)
     
     if (waitTime > 0)
     {
-        waitTime = qMin(waitTime, frameDuration * 2);
+        waitTime = qMin(waitTime, static_cast<qint64>(frameDuration / m_playbackRate) * 2);
         if (waitTime < 10000)
         {
             QThread::usleep(static_cast<unsigned long>(waitTime));
@@ -893,7 +1073,7 @@ void FFmpegDecoderThread::decodeAudioPacket(AVPacket *pkt)
         pts = av_rescale_q(pts, m_audio.timeBase, {1, 1000000});
         m_syncManager.updateAudioClock(pts);
 
-        // 计算输出样本数
+        // 计算输出样本数（考虑倍速影响）
         int out_samples = av_rescale_rnd(
             swr_get_delay(m_audio.swrCtx, frame->sample_rate) + frame->nb_samples,
             m_out_sample_rate, frame->sample_rate, AV_ROUND_UP);
@@ -1042,11 +1222,25 @@ FFmpegDecoderThread::Statistics FFmpegPlayer::getStatistics() const
     return m_decoder_->getStatistics();
 }
 
+void FFmpegPlayer::setPlaybackRate(float rate)
+{
+    if (m_decoder_)
+    {
+        m_decoder_->setPlaybackRate(rate);
+    }
+}
+
+float FFmpegPlayer::playbackRate() const
+{
+    return m_decoder_ ? m_decoder_->playbackRate() : 1.0f;
+}
+
 void FFmpegPlayer::setupConnections()
 {
     connect(m_decoder_, &FFmpegDecoderThread::frameReady, this, &FFmpegPlayer::updateFrame, Qt::QueuedConnection);
     connect(m_decoder_, &FFmpegDecoderThread::positionChanged, m_playerCore_, &PlayerWidgetBase::currentPosition, Qt::QueuedConnection);
     connect(m_decoder_, &FFmpegDecoderThread::durationChanged, m_playerCore_, &PlayerWidgetBase::currentDuration, Qt::QueuedConnection);
+    connect(m_decoder_, &FFmpegDecoderThread::playbackRateChanged, m_playerCore_, &PlayerWidgetBase::currentPlaybackRate, Qt::QueuedConnection);
     connect(m_decoder_, &FFmpegDecoderThread::playStateChanged, m_playerCore_, &PlayerWidgetBase::playStateChanged, Qt::QueuedConnection);
     connect(m_decoder_, &FFmpegDecoderThread::volumeChanged, m_playerCore_, &PlayerWidgetBase::currentVolume, Qt::QueuedConnection);
     connect(m_decoder_, &FFmpegDecoderThread::muteStateChanged, m_playerCore_, &PlayerWidgetBase::muteStateChanged, Qt::QueuedConnection);
@@ -1061,6 +1255,7 @@ void FFmpegPlayer::setupConnections()
     connect(m_playerCore_, &PlayerWidgetBase::changeMuteState, m_decoder_, &FFmpegDecoderThread::setMute, Qt::QueuedConnection);
     connect(m_playerCore_, &PlayerWidgetBase::seekPlay, m_decoder_, &FFmpegDecoderThread::seekTo, Qt::QueuedConnection);
     connect(m_playerCore_, &PlayerWidgetBase::setVolume, m_decoder_, &FFmpegDecoderThread::setVolume, Qt::QueuedConnection);
+    connect(m_playerCore_, &PlayerWidgetBase::setPlaybackRate, this, &FFmpegPlayer::setPlaybackRate, Qt::QueuedConnection);
 }
 
 void FFmpegPlayer::play(const QString &url)

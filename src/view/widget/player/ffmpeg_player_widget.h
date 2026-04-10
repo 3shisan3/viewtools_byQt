@@ -1,18 +1,19 @@
 /*****************************************************************
 File:        ffmpeg_player_widget.h
-Version:     2.0
+Version:     2.1
 Author:
 start date:
 Description: 基于FFmpeg库实现的多线程音视频播放器组件
     主要功能：
         1. 支持本地文件（MP4/AVI/MKV等）和网络流（RTSP/HTTP）播放
         2. 完整的播放控制：播放、暂停、停止、跳转、音量调节、静音
-        3. 基于音频主时钟的精确音视频同步机制
-        4. 可选帧缓冲队列，支持智能丢帧与缓冲区动态调整
-        5. 网络流自动重连（可配置重试次数与退避延迟）
-        6. 音频设备自适应容错（自动匹配采样率）
-        7. 实时性能统计（帧率、丢帧数、码率、音频欠载）
-        8. 截图保存功能
+        3. 支持倍速/慢速播放（0.5x ~ 2.0x）
+        4. 基于音频主时钟的精确音视频同步机制
+        5. 可选帧缓冲队列，支持智能丢帧与缓冲区动态调整
+        6. 网络流自动重连（可配置重试次数与退避延迟）
+        7. 音频设备自适应容错（自动匹配采样率）
+        8. 实时性能统计（帧率、丢帧数、码率、音频欠载）
+        9. 截图保存功能
     技术特性：
         1. 解码线程与UI线程分离，避免界面卡顿
         2. 支持Qt5/Qt6双版本编译
@@ -21,7 +22,8 @@ Description: 基于FFmpeg库实现的多线程音视频播放器组件
         5. 音频非阻塞写入，缓冲状态信号通知
 
 Version history
-[序号][修改日期][修改者][修改内容]
+[序号]    |   [修改日期]  |   [修改者]   |   [修改内容]
+1             2026-4-08      cjx            create
 
 *****************************************************************/
 
@@ -65,7 +67,7 @@ extern "C"
 
 #include "base_player_widget.h"
 
-// ==================== 音视频同步管理器====================
+// ==================== 音视频同步管理器 ====================
 class AVSyncManager
 {
 public:
@@ -119,24 +121,27 @@ public:
     }
 
     /**
-     * 计算视频帧需要等待的时间
+     * 计算视频帧需要等待的时间（支持倍速）
      * @param videoPts 视频帧的PTS（微秒）
-     * @param frameDuration 帧持续时间（微秒）
+     * @param frameDuration 原始帧持续时间（微秒）
+     * @param playbackRate 播放倍速（0.5 = 慢速，1.0 = 正常，2.0 = 倍速）
      * @return 需要等待的微秒数，返回0表示立即显示，返回-1表示应该丢弃
      */
-    qint64 calculateWaitTime(qint64 videoPts, qint64 frameDuration)
+    qint64 calculateWaitTime(qint64 videoPts, qint64 frameDuration, float playbackRate = 1.0f)
     {
         QMutexLocker lock(&m_mutex);
         
-        // 如果没有有效的音频时钟，使用帧间隔控制
+        // 根据倍速调整帧持续时间
+        qint64 adjustedDuration = static_cast<qint64>(frameDuration / playbackRate);
+        
         if (!m_audioClockValid)
         {
             if (m_lastFrameTime > 0)
             {
                 qint64 elapsed = av_gettime_relative() - m_lastFrameTime;
-                if (elapsed < frameDuration)
+                if (elapsed < adjustedDuration)
                 {
-                    return frameDuration - elapsed;
+                    return adjustedDuration - elapsed;
                 }
             }
             return 0;
@@ -146,14 +151,13 @@ public:
         qint64 elapsed = av_gettime_relative() - m_audioClockTime;
         qint64 currentClock = m_audioClock + elapsed;
         
-        // 计算差值：视频PTS - 音频时钟
-        // 正数表示视频超前，需要等待
-        // 负数表示视频落后，可能丢弃或立即显示
+        // 倍速播放时，需要调整PTS比较：视频PTS按倍速缩放后与音频时钟比较
+        // 实际上视频PTS本身不变，但音频时钟的推进速度需要根据倍速调整
+        // 这里直接比较原始值，因为音频时钟的更新频率已经受倍速影响（通过重采样）
         qint64 diff = videoPts - currentClock;
         
-        // 同步参数
-        const qint64 MAX_DIFF = 100000;      // 最大差值100ms，超过则丢帧
-        const qint64 MIN_DIFF = -50000;      // 最小差值-50ms，落后超过50ms丢帧
+        const qint64 MAX_DIFF = 100000;      // 最大差值100ms
+        const qint64 MIN_DIFF = -50000;      // 最小差值-50ms
         const qint64 SYNC_THRESHOLD = 10000; // 10ms内视为同步
         
         if (diff > MAX_DIFF)
@@ -196,7 +200,7 @@ public:
         m_lastFrameTime = 0;
     }
 
-    /** 记录帧已显示（用于无音频时的帧间隔控制） */
+    /** 记录帧已显示 */
     void frameDisplayed()
     {
         QMutexLocker lock(&m_mutex);
@@ -234,7 +238,7 @@ public:
     {
         QImage image;
         qint64 pts;         // 时间戳（微秒）
-        qint64 duration;    // 帧持续时间（微秒）
+        qint64 duration;    // 原始帧持续时间（微秒）
 
         VideoFrame() : pts(0), duration(40000) {}
         VideoFrame(const QImage &img, qint64 p, qint64 d = 40000)
@@ -410,6 +414,11 @@ public:
     void seekTo(qint64 posMs);
     void setVolume(int volume);
     void setMute();
+    
+    /** 设置播放倍速（0.5x ~ 2.0x） */
+    void setPlaybackRate(float rate);
+    /** 获取当前播放倍速 */
+    float playbackRate() const { return m_playbackRate; }
 
     // 配置
     void setFrameBufferEnabled(bool enabled);
@@ -427,80 +436,35 @@ public:
         int reconnectCount = 0;
         int audioUnderrunCount = 0;
         qint64 currentBitrate = 0;
+        float currentPlaybackRate = 1.0f;  // 当前播放倍速
     };
     Statistics getStatistics() const;
 
 signals:
-    /** 
-     * 视频帧就绪信号
-     * @param image 解码后的RGB32格式视频帧，可直接用于显示
-     * @note 该信号在解码线程中发出，建议使用Qt::QueuedConnection连接
-     */
+    /** 视频帧就绪信号 */
     void frameReady(const QImage &image);
-    /** 
-     * 播放位置变化信号
-     * @param pos 当前播放位置（毫秒）
-     * @note 根据视频帧PTS或音频时钟计算得出
-     */
+    /** 播放位置变化信号（毫秒） */
     void positionChanged(qint64 pos);
-    /** 
-     * 媒体总时长变化信号
-     * @param duration 媒体总时长（毫秒），0表示无法获取
-     * @note 在成功打开媒体文件后发出
-     */
+    /** 媒体总时长变化信号（毫秒） */
     void durationChanged(qint64 duration);
-    /** 
-     * 播放状态变化信号
-     * @param state 播放状态：PlayingState（播放中）、PausedState（暂停）、StoppedState（停止）
-     */
+    /** 播放状态变化信号 */
     void playStateChanged(PlayerWidgetBase::PlayState state);
-    /** 
-     * 音量变化信号
-     * @param volume 当前音量值（0-100）
-     */
+    /** 音量变化信号（0-100） */
     void volumeChanged(int volume);
-    /** 
-     * 静音状态变化信号
-     * @param isMute true-静音开启，false-静音关闭
-     */
+    /** 静音状态变化信号 */
     void muteStateChanged(bool isMute);
-    /** 
-     * 错误发生信号
-     * @param message 错误描述信息（用户可读）
-     * @note 包括：打开文件失败、解码错误、重连失败等
-     */
+    /** 错误发生信号 */
     void errorOccurred(const QString &message);
-    /** 
-     * 缓冲区状态变化信号
-     * @param usagePercent 缓冲区使用率（0-100），基于最大容量计算
-     * @param droppedFrames 累计丢帧数（因缓冲区满而被丢弃的帧数）
-     * @note 每秒更新一次，用于监控播放器健康状态
-     */
+    /** 缓冲区状态变化信号 */
     void bufferStatusChanged(int usagePercent, int droppedFrames);
-    /** 
-     * 网络重连中信号
-     * @param attempt 当前第几次重连尝试（从1开始）
-     * @param maxRetries 最大重试次数
-     * @note 仅网络流且启用自动重连时触发
-     */
+    /** 网络重连中信号 */
     void networkReconnecting(int attempt, int maxRetries);
-    /** 
-     * 网络重连成功信号
-     * @note 重连成功后恢复播放，并重置重连计数器
-     */
+    /** 网络重连成功信号 */
     void networkReconnected();
-    /** 
-     * 统计信息更新信号
-     * @param stats 统计数据结构体，包含以下字段：
-     *        - totalFramesDecoded: 累计解码帧数
-     *        - totalFramesDisplayed: 累计显示帧数
-     *        - droppedFrames: 累计丢帧数
-     *        - reconnectCount: 重连成功次数
-     *        - audioUnderrunCount: 音频欠载次数
-     *        - currentBitrate: 当前实时码率（bps）
-     * @note 每秒更新一次，用于性能监控和调试
-     */
+    /** 统计信息更新信号 */
     void statisticsUpdated(const Statistics &stats);
+    /** 播放倍速变化信号 */
+    void playbackRateChanged(float rate);
 
 protected:
     void run() override;
@@ -523,6 +487,9 @@ private:
     void applyVolume(int16_t *samples, int count);
     void cleanupResources();
     void updatePerformanceStats();
+    
+    /** 重新初始化音频输出（倍速变化时调用） */
+    void reinitAudioOutput();
 
     // 状态变量
     QMutex m_mutex;
@@ -535,6 +502,8 @@ private:
     qint64 m_seekPos = 0;
     int m_volume = 100;
     int m_out_sample_rate = 44100;
+    float m_playbackRate = 1.0f;      // 播放倍速（0.5 ~ 2.0）
+    bool m_needReinitAudio = false;   // 倍速变化后需要重新初始化音频
 
     // 重连相关
     bool m_autoReconnect = false;
@@ -544,10 +513,10 @@ private:
 
     // 时间信息
     qint64 m_lastDisplayTime = 0;
-    qint64 m_frameInterval = 40000; // 帧间隔（微秒）
-    qint64 m_lastVideoPts = 0;      // 上一帧PTS，用于计算帧间隔
-    qint64 m_firstVideoPts = -1;    // 首帧PTS
-    qint64 m_startTime = 0;         // 开始播放的系统时间
+    qint64 m_frameInterval = 40000;   // 原始帧间隔（微秒）
+    qint64 m_lastVideoPts = 0;
+    qint64 m_firstVideoPts = -1;
+    qint64 m_startTime = 0;
 
     // 同步管理
     AVSyncManager m_syncManager;
@@ -590,6 +559,8 @@ private:
         AVCodecContext *codecCtx = nullptr;
         SwrContext *swrCtx = nullptr;
         AVRational timeBase = {0, 0};
+        int originalSampleRate = 0;      // 原始采样率
+        int targetSampleRate = 44100;    // 重采样目标采样率（倍速调整后）
 #if QT_VERSION_MAJOR < 6
         QAudioOutput *output = nullptr;
 #else
@@ -615,6 +586,11 @@ public:
     void setAutoReconnect(bool enabled, int maxRetries = 3);
     bool takeScreenshot(const QString &filePath);
     FFmpegDecoderThread::Statistics getStatistics() const;
+    
+    /** 设置播放倍速（0.5x ~ 2.0x） */
+    void setPlaybackRate(float rate);
+    /** 获取当前播放倍速 */
+    float playbackRate() const;
 
 public slots:
     void play(const QString &url);
