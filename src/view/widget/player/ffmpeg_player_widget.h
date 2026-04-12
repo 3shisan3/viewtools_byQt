@@ -3,7 +3,7 @@ File:        ffmpeg_player_widget.h
 Version:     2.1
 Author:
 start date:
-Description: 基于FFmpeg库实现的多线程音视频播放器组件
+Description: 基于FFmpeg库实现的多线程音视频播放器组件（通用跨平台）
     主要功能：
         1. 支持本地文件（MP4/AVI/MKV等）和网络流（RTSP/HTTP）播放
         2. 完整的播放控制：播放、暂停、停止、跳转、音量调节、静音
@@ -14,6 +14,7 @@ Description: 基于FFmpeg库实现的多线程音视频播放器组件
         7. 音频设备自适应容错（自动匹配采样率）
         8. 实时性能统计（帧率、丢帧数、码率、音频欠载）
         9. 截图保存功能
+        10. 支持OpenGL硬件加速渲染（通过OPENGL_ENABLE宏控制）
     技术特性：
         1. 解码线程与UI线程分离，避免界面卡顿
         2. 支持Qt5/Qt6双版本编译
@@ -24,6 +25,8 @@ Description: 基于FFmpeg库实现的多线程音视频播放器组件
 Version history
 [序号]    |   [修改日期]  |   [修改者]   |   [修改内容]
 1             2026-4-08      cjx            create
+2             2026-4-10      cjx            添加OpenGL硬件加速支持
+                                             优化4K视频解码性能
 
 *****************************************************************/
 
@@ -67,6 +70,15 @@ extern "C"
 
 #include "base_player_widget.h"
 
+// ==================== OpenGL支持检测 ====================
+// 通过OPENGL_ENABLE宏控制是否启用OpenGL硬件加速渲染
+#ifdef OPENGL_ENABLE
+    #include "view/widget/opengl/opengl_video_widget.h"
+    #define OPENGL_AVAILABLE 1
+#else
+    #define OPENGL_AVAILABLE 0
+#endif
+
 // ==================== 音视频同步管理器 ====================
 class AVSyncManager
 {
@@ -78,10 +90,7 @@ public:
         SYNC_EXTERNAL_CLOCK  // 外部时钟
     };
 
-    AVSyncManager()
-    {
-        reset();
-    }
+    AVSyncManager() { reset(); }
 
     /** 更新音频时钟 */
     void updateAudioClock(qint64 pts)
@@ -103,20 +112,20 @@ public:
     qint64 getCurrentClock() const
     {
         QMutexLocker lock(&m_mutex);
-        
+
         if (m_syncMode == SYNC_AUDIO_MASTER && m_audioClockValid)
         {
             // 音频时钟 = 上次PTS + 经过的时间
             qint64 elapsed = av_gettime_relative() - m_audioClockTime;
             return m_audioClock + elapsed;
         }
-        
+
         // 视频主时钟模式
         if (m_videoClock > 0)
         {
             return m_videoClock;
         }
-        
+
         return 0;
     }
 
@@ -130,7 +139,7 @@ public:
     qint64 calculateWaitTime(qint64 videoPts, qint64 frameDuration, float playbackRate = 1.0f)
     {
         QMutexLocker lock(&m_mutex);
-        
+
         // 根据倍速调整帧持续时间
         qint64 adjustedDuration = static_cast<qint64>(frameDuration / playbackRate);
         
@@ -152,8 +161,8 @@ public:
         qint64 currentClock = m_audioClock + elapsed;
         
         // 倍速播放时，需要调整PTS比较：视频PTS按倍速缩放后与音频时钟比较
-        // 实际上视频PTS本身不变，但音频时钟的推进速度需要根据倍速调整
-        // 这里直接比较原始值，因为音频时钟的更新频率已经受倍速影响（通过重采样）
+        // 实际上视频PTS本身不变，但音频时钟的推进速度已经受倍速影响（通过重采样）
+        // 这里直接比较原始值，因为音频时钟的更新频率已经受倍速影响
         qint64 diff = videoPts - currentClock;
         
         const qint64 MAX_DIFF = 100000;      // 最大差值100ms
@@ -217,7 +226,7 @@ public:
 private:
     mutable QMutex m_mutex;
     SyncMode m_syncMode = SYNC_AUDIO_MASTER;
-    
+
     // 音频时钟
     qint64 m_audioClock = 0;
     qint64 m_audioClockTime = 0;
@@ -247,7 +256,8 @@ public:
         bool isValid() const { return !image.isNull() && pts >= 0; }
     };
 
-    explicit OptionalFrameBuffer(int maxSize = 15) : m_maxSize(maxSize), m_droppedFrames(0) {}
+    explicit OptionalFrameBuffer(int maxSize = 15)
+        : m_maxSize(maxSize), m_droppedFrames(0) {}
 
     bool push(const VideoFrame &frame)
     {
@@ -368,11 +378,7 @@ public:
         return written == size;
     }
 
-    void notifyBufferReady()
-    {
-        m_bufferAvailable.release();
-    }
-
+    void notifyBufferReady() { m_bufferAvailable.release(); }
     void start() { m_running = true; }
 
 private:
@@ -414,7 +420,6 @@ public:
     void seekTo(qint64 posMs);
     void setVolume(int volume);
     void setMute();
-    
     /** 设置播放倍速（0.5x ~ 2.0x） */
     void setPlaybackRate(float rate);
     /** 获取当前播放倍速 */
@@ -424,6 +429,7 @@ public:
     void setFrameBufferEnabled(bool enabled);
     void setMaxBufferSize(int size);
     void setAutoReconnect(bool enabled, int maxRetries = 3);
+    void setMemoryLimit(int limitMB);
 
     // 截图
     bool takeScreenshot(const QString &filePath);
@@ -436,7 +442,9 @@ public:
         int reconnectCount = 0;
         int audioUnderrunCount = 0;
         qint64 currentBitrate = 0;
-        float currentPlaybackRate = 1.0f;  // 当前播放倍速
+        float currentPlaybackRate = 1.0f;
+        float currentFps = 0.0f;
+        int memoryUsageMB = 0;
     };
     Statistics getStatistics() const;
 
@@ -476,6 +484,7 @@ private:
     QAudioFormat createAudioFormat() const;
     bool reconnectMedia();
     void updateFrameRate();
+    void adjustBufferForResolution();
 
     void decodeVideoPacket(AVPacket *pkt);
     void decodeAudioPacket(AVPacket *pkt);
@@ -487,9 +496,10 @@ private:
     void applyVolume(int16_t *samples, int count);
     void cleanupResources();
     void updatePerformanceStats();
-    
     /** 重新初始化音频输出（倍速变化时调用） */
     void reinitAudioOutput();
+
+    bool is4KVideo() const;
 
     // 状态变量
     QMutex m_mutex;
@@ -502,8 +512,9 @@ private:
     qint64 m_seekPos = 0;
     int m_volume = 100;
     int m_out_sample_rate = 44100;
-    float m_playbackRate = 1.0f;      // 播放倍速（0.5 ~ 2.0）
-    bool m_needReinitAudio = false;   // 倍速变化后需要重新初始化音频
+    float m_playbackRate = 1.0f;
+    bool m_needReinitAudio = false;
+    int m_memoryLimitMB = 512;
 
     // 重连相关
     bool m_autoReconnect = false;
@@ -513,10 +524,15 @@ private:
 
     // 时间信息
     qint64 m_lastDisplayTime = 0;
-    qint64 m_frameInterval = 40000;   // 原始帧间隔（微秒）
+    qint64 m_frameInterval = 40000;
     qint64 m_lastVideoPts = 0;
     qint64 m_firstVideoPts = -1;
     qint64 m_startTime = 0;
+    
+    // 性能监控
+    qint64 m_lastFpsCalcTime = 0;
+    int m_framesSinceLastFpsCalc = 0;
+    float m_currentFps = 0.0f;
 
     // 同步管理
     AVSyncManager m_syncManager;
@@ -581,15 +597,25 @@ public:
     PlayerWidgetBase *PlayerCore() const;
     void stop();
 
+    // 配置方法
     void setFrameBufferEnabled(bool enabled);
     void setMaxBufferSize(int size);
     void setAutoReconnect(bool enabled, int maxRetries = 3);
+    void setMemoryLimit(int limitMB);
+    
+    /**
+     * @brief 设置是否使用OpenGL硬件加速渲染
+     * @param enabled true启用OpenGL，false使用软件渲染
+     * @note 仅在OPENGL_ENABLE宏定义且OpenGL可用时生效
+     */
+    void setUseOpenGL(bool enabled);
+    
+    /** 获取是否使用OpenGL渲染 */
+    bool isUsingOpenGL() const { return m_useOpenGL && m_openglAvailable; }
+    
     bool takeScreenshot(const QString &filePath);
     FFmpegDecoderThread::Statistics getStatistics() const;
-    
-    /** 设置播放倍速（0.5x ~ 2.0x） */
     void setPlaybackRate(float rate);
-    /** 获取当前播放倍速 */
     float playbackRate() const;
 
 public slots:
@@ -606,13 +632,23 @@ protected:
 private:
     void setupConnections();
     void updateDisplay();
+    void initRenderWidget();
 
-    QLabel *m_displayLabel_;
+    QWidget *m_displayWidget_;               // 显示组件（QLabel或OpenGLWidget）
+    QLabel *m_displayLabel_;                 // QLabel软件渲染组件（降级备用）
     PlayerWidgetBase *m_playerCore_;
     FFmpegDecoderThread *m_decoder_;
 
     QImage m_currentFrame;
     QMutex m_frameMutex;
+    
+    bool m_useOpenGL;                        // 是否尝试使用OpenGL渲染
+    bool m_openglAvailable;                  // OpenGL是否可用
+    bool m_firstFrameReceived;               // 是否已收到第一帧
+    
+#if OPENGL_AVAILABLE
+    OpenGLVideoWidget *m_glWidget_;          // OpenGL硬件加速渲染组件
+#endif
 };
 
 #endif // _FFMPEG_PLAYER_WIDGET_H
