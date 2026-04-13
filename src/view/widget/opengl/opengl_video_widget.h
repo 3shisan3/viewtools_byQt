@@ -1,22 +1,15 @@
 /*****************************************************************
 File:        opengl_video_widget.h
-Version:     1.0
+Version:     1.1
 Author:      cjx
-Date:        2026-04-10
+Date:        2026-04-13
 Description: OpenGL视频渲染组件，用于高性能4K视频播放
              支持YUV纹理直接渲染，减少CPU到GPU的转换开销
              通过OPENGL_ENABLE宏控制是否启用
 
-使用方法：
-    1. 在项目文件中定义 OPENGL_ENABLE 宏启用OpenGL支持
-    2. 创建 OpenGLVideoWidget 实例
-    3. 调用 updateFrame() 更新视频帧
-    4. 自动处理GPU渲染和缩放
-
-性能优势：
-    - 4K视频播放时CPU占用降低50-70%
-    - GPU硬件加速缩放，无性能损失
-    - 减少内存拷贝次数
+Version history
+[序号]    |   [修改日期]  |   [修改者]   |   [修改内容]
+1             2026-4-13      cjx            create
 *****************************************************************/
 
 #ifndef OPENGL_VIDEO_WIDGET_H
@@ -34,12 +27,17 @@ Description: OpenGL视频渲染组件，用于高性能4K视频播放
 #include <QOpenGLFunctions>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLWidget>
+#include <QWaitCondition>
 
 /**
  * @brief OpenGL视频渲染Widget
  * 
  * 提供硬件加速的视频渲染，特别针对4K高分辨率视频优化。
  * 支持RGB和YUV两种渲染模式，YUV模式性能更优。
+ * 
+ * 线程安全说明：
+ * - updateFrame/updateFrameYUV 可在任意线程调用（数据会被复制到缓冲区）
+ * - 实际OpenGL操作在paintGL中执行（GUI线程）
  */
 class OpenGLVideoWidget : public QOpenGLWidget, protected QOpenGLFunctions
 {
@@ -147,6 +145,7 @@ protected:
     /**
      * @brief OpenGL初始化
      * 在第一次显示前由Qt调用，初始化OpenGL资源和着色器
+     * Qt会自动调用makeCurrent()
      */
     void initializeGL() override;
     
@@ -154,12 +153,14 @@ protected:
      * @brief 窗口大小变化处理
      * @param w 新宽度
      * @param h 新高度
+     * Qt会自动调用makeCurrent()
      */
     void resizeGL(int w, int h) override;
     
     /**
      * @brief 每帧渲染
      * 由Qt在需要重绘时调用，执行实际的OpenGL绘制命令
+     * Qt会自动调用makeCurrent()
      */
     void paintGL() override;
 
@@ -175,27 +176,31 @@ private:
     
     /**
      * @brief 初始化RGB纹理
+     * 必须在有效的OpenGL上下文中调用
      */
     void initRGBTextures();
     
     /**
      * @brief 初始化YUV纹理
+     * 必须在有效的OpenGL上下文中调用
      */
     void initYUVTextures();
     
     /**
      * @brief 清理OpenGL资源
+     * 必须在有效的OpenGL上下文中调用
      */
     void cleanupGL();
     
     /**
      * @brief 从QImage更新RGB纹理
      * @param image 源图像
+     * 必须在有效的OpenGL上下文中调用
      */
     void updateTextureFromImage(const QImage &image);
     
     /**
-     * @brief 更新YUV纹理
+     * @brief 更新YUV纹理（内部调用，必须在OpenGL上下文中）
      * @param y_data Y平面数据
      * @param u_data U平面数据
      * @param v_data V平面数据
@@ -204,13 +209,16 @@ private:
      * @param v_linesize V平面行步长
      * @param width 视频宽度
      * @param height 视频高度
+     * 
+     * 注意：此函数必须在有效的OpenGL上下文中调用（如paintGL内部）
      */
-    void updateYUVTextures(const uint8_t *y_data, const uint8_t *u_data, const uint8_t *v_data,
-                           int y_linesize, int u_linesize, int v_linesize,
-                           int width, int height);
+    void updateYUVTexturesInternal(const uint8_t *y_data, const uint8_t *u_data, const uint8_t *v_data,
+                                   int y_linesize, int u_linesize, int v_linesize,
+                                   int width, int height);
     
     /**
      * @brief 创建OpenGL着色器程序
+     * 必须在有效的OpenGL上下文中调用
      * @return 是否创建成功
      */
     bool createShaders();
@@ -233,6 +241,14 @@ private:
      * @param location 错误发生位置描述
      */
     void checkGLError(const char* location);
+    
+    /**
+     * @brief 计算变换矩阵（保持宽高比）
+     * @param frameWidth 视频帧宽度
+     * @param frameHeight 视频帧高度
+     * @return 变换矩阵
+     */
+    QMatrix4x4 calculateTransformMatrix(int frameWidth, int frameHeight) const;
 
     // ==================== OpenGL资源 ====================
     
@@ -257,7 +273,7 @@ private:
     int m_uvWidth = 0;          ///< UV平面宽度（YUV420中为宽度/2）
     int m_uvHeight = 0;         ///< UV平面高度（YUV420中为高度/2）
     
-    // ==================== 帧数据 ====================
+    // ==================== 帧数据（线程安全）====================
     
     QImage m_currentFrame;      ///< 当前RGB帧数据
     QMutex m_frameMutex;        ///< 帧数据互斥锁
@@ -281,7 +297,7 @@ private:
     
     ColorSpace m_colorSpace = COLOR_BT601;  ///< 当前色彩空间，默认BT.601确保兼容性
     
-    // ==================== YUV数据缓冲区 ====================
+    // ==================== YUV数据缓冲区（线程安全）====================
     
     /**
      * @brief YUV数据结构，用于跨线程传递
@@ -296,9 +312,22 @@ private:
         int width = 0;          ///< 视频宽度
         int height = 0;         ///< 视频高度
         bool valid = false;     ///< 数据是否有效
+        
+        void clear() {
+            yData.clear();
+            uData.clear();
+            vData.clear();
+            yLinesize = uLinesize = vLinesize = 0;
+            width = height = 0;
+            valid = false;
+        }
     };
+    
     YUVData m_pendingYUV;       ///< 待处理的YUV数据
     QMutex m_yuvMutex;          ///< YUV数据互斥锁
+    
+    // 标记是否有新的RGB帧需要更新纹理
+    bool m_rgbTextureNeedsUpdate = false;
 };
 
 #else  // OPENGL_ENABLE未定义

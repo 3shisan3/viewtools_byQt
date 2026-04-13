@@ -36,6 +36,7 @@ Version history
 #define _FFMPEG_PLAYER_WIDGET_H
 
 #include <QAudioFormat>
+#include <QCloseEvent>
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QLabel>
@@ -122,10 +123,7 @@ public:
 
         // 视频主时钟模式
         if (m_videoClock > 0)
-        {
             return m_videoClock;
-        }
-
         return 0;
     }
 
@@ -142,51 +140,49 @@ public:
 
         // 根据倍速调整帧持续时间
         qint64 adjustedDuration = static_cast<qint64>(frameDuration / playbackRate);
-        
+
         if (!m_audioClockValid)
         {
             if (m_lastFrameTime > 0)
             {
                 qint64 elapsed = av_gettime_relative() - m_lastFrameTime;
                 if (elapsed < adjustedDuration)
-                {
                     return adjustedDuration - elapsed;
-                }
             }
             return 0;
         }
-        
+
         // 获取当前主时钟值
         qint64 elapsed = av_gettime_relative() - m_audioClockTime;
         qint64 currentClock = m_audioClock + elapsed;
-        
+
         // 倍速播放时，需要调整PTS比较：视频PTS按倍速缩放后与音频时钟比较
         // 实际上视频PTS本身不变，但音频时钟的推进速度已经受倍速影响（通过重采样）
         // 这里直接比较原始值，因为音频时钟的更新频率已经受倍速影响
         qint64 diff = videoPts - currentClock;
-        
+
         const qint64 MAX_DIFF = 100000;      // 最大差值100ms
         const qint64 MIN_DIFF = -50000;      // 最小差值-50ms
         const qint64 SYNC_THRESHOLD = 10000; // 10ms内视为同步
-        
+
         if (diff > MAX_DIFF)
         {
             // 视频超前太多，限制最大等待时间
             return MAX_DIFF;
         }
-        
+
         if (diff < MIN_DIFF)
         {
             // 视频落后太多，丢弃这一帧
             return -1;
         }
-        
+
         if (diff > SYNC_THRESHOLD)
         {
             // 视频超前，需要等待
             return diff;
         }
-        
+
         // 在同步范围内，立即显示
         return 0;
     }
@@ -231,12 +227,44 @@ private:
     qint64 m_audioClock = 0;
     qint64 m_audioClockTime = 0;
     bool m_audioClockValid = false;
-    
+
     // 视频时钟
     qint64 m_videoClock = 0;
-    
+
     // 帧间隔控制
     qint64 m_lastFrameTime = 0;
+};
+
+// ==================== YUV帧数据结构 ====================
+struct YUVFrameData
+{
+    QByteArray yData;
+    QByteArray uData;
+    QByteArray vData;
+    int yLinesize = 0;
+    int uLinesize = 0;
+    int vLinesize = 0;
+    int width = 0;
+    int height = 0;
+    qint64 pts = 0;
+    qint64 duration = 40000;
+
+    bool isValid() const
+    {
+        return !yData.isEmpty() && !uData.isEmpty() && !vData.isEmpty() &&
+                width > 0 && height > 0;
+    }
+
+    void clear()
+    {
+        yData.clear();
+        uData.clear();
+        vData.clear();
+        yLinesize = uLinesize = vLinesize = 0;
+        width = height = 0;
+        pts = 0;
+        duration = 40000;
+    }
 };
 
 // ==================== 帧缓冲区 ====================
@@ -246,14 +274,23 @@ public:
     struct VideoFrame
     {
         QImage image;
+        YUVFrameData yuvData;
         qint64 pts;         // 时间戳（微秒）
         qint64 duration;    // 原始帧持续时间（微秒）
+        bool isYUV;
 
-        VideoFrame() : pts(0), duration(40000) {}
+        VideoFrame() : pts(0), duration(40000), isYUV(false) {}
         VideoFrame(const QImage &img, qint64 p, qint64 d = 40000)
-            : image(img), pts(p), duration(d) {}
+            : image(img), pts(p), duration(d), isYUV(false) {}
+        VideoFrame(const YUVFrameData &yuv, qint64 p, qint64 d = 40000)
+            : yuvData(yuv), pts(p), duration(d), isYUV(true) {}
 
-        bool isValid() const { return !image.isNull() && pts >= 0; }
+        bool isValid() const
+        {
+            if (isYUV)
+                return yuvData.isValid() && pts >= 0;
+            return !image.isNull() && pts >= 0;
+        }
     };
 
     explicit OptionalFrameBuffer(int maxSize = 15)
@@ -276,9 +313,7 @@ public:
     {
         QMutexLocker lock(&m_mutex);
         if (m_frames.isEmpty() && timeoutMs > 0)
-        {
             m_condition.wait(&m_mutex, timeoutMs);
-        }
         return m_frames.isEmpty() ? VideoFrame() : m_frames.dequeue();
     }
 
@@ -286,9 +321,7 @@ public:
     {
         QMutexLocker lock(&m_mutex);
         while (m_frames.size() > keepCount)
-        {
             m_frames.dequeue();
-        }
     }
 
     void clear()
@@ -345,6 +378,8 @@ public:
         m_device = nullptr;
         m_audioOutput = nullptr;
     }
+    
+    void start() { m_running = true; }
 
     bool write(const uint8_t *data, int size, int timeoutMs = 100)
     {
@@ -365,21 +400,16 @@ public:
             }
 
             int toWrite = qMin(size - written, freeBytes);
-            int w = m_device->write(reinterpret_cast<const char*>(data + written), toWrite);
+            int w = m_device->write(reinterpret_cast<const char *>(data + written), toWrite);
             if (w > 0)
-            {
                 written += w;
-            }
             else
-            {
                 return false;
-            }
         }
         return written == size;
     }
 
     void notifyBufferReady() { m_bufferAvailable.release(); }
-    void start() { m_running = true; }
 
 private:
     int getFreeBytes()
@@ -430,9 +460,20 @@ public:
     void setMaxBufferSize(int size);
     void setAutoReconnect(bool enabled, int maxRetries = 3);
     void setMemoryLimit(int limitMB);
+    void setYUVModeEnabled(bool enabled) { m_useYUVMode = enabled; }
 
     // 截图
     bool takeScreenshot(const QString &filePath);
+
+    /**
+     * @brief 静态方法：将YUV数据转换为QImage
+     * @param yuvData YUV帧数据
+     * @return 转换后的RGB图像
+     * 
+     * 此方法为静态公开方法，可在没有解码器实例的情况下调用。
+     * 用于在无法使用OpenGL时将YUV数据转换为RGB显示。
+     */
+    static QImage convertYUVToImageStatic(const YUVFrameData &yuvData);
 
     // 统计信息
     struct Statistics {
@@ -451,6 +492,7 @@ public:
 signals:
     /** 视频帧就绪信号 */
     void frameReady(const QImage &image);
+    void frameReadyYUV(const YUVFrameData &yuvData);
     /** 播放位置变化信号（毫秒） */
     void positionChanged(qint64 pos);
     /** 媒体总时长变化信号（毫秒） */
@@ -490,13 +532,14 @@ private:
     void decodeAudioPacket(AVPacket *pkt);
     void processVideoFrameDirect(AVFrame *frame);
     void processVideoFrameBuffered(AVFrame *frame);
+
+    YUVFrameData extractYUVData(AVFrame *frame);
     QImage convertFrameToImage(AVFrame *frame);
 
     void writeAudioData(const uint8_t *data, int size);
     void applyVolume(int16_t *samples, int count);
     void cleanupResources();
     void updatePerformanceStats();
-    /** 重新初始化音频输出（倍速变化时调用） */
     void reinitAudioOutput();
 
     bool is4KVideo() const;
@@ -515,6 +558,7 @@ private:
     float m_playbackRate = 1.0f;
     bool m_needReinitAudio = false;
     int m_memoryLimitMB = 512;
+    bool m_useYUVMode = false; // 默认关闭，稳定后再开启
 
     // 重连相关
     bool m_autoReconnect = false;
@@ -528,7 +572,7 @@ private:
     qint64 m_lastVideoPts = 0;
     qint64 m_firstVideoPts = -1;
     qint64 m_startTime = 0;
-    
+
     // 性能监控
     qint64 m_lastFpsCalcTime = 0;
     int m_framesSinceLastFpsCalc = 0;
@@ -567,6 +611,7 @@ private:
         AVRational frameRate = {0, 0};
         AVRational timeBase = {0, 0};
         int width = 0, height = 0;
+        AVPixelFormat pixFmt = AV_PIX_FMT_NONE;
     } m_video;
 
     struct
@@ -602,17 +647,17 @@ public:
     void setMaxBufferSize(int size);
     void setAutoReconnect(bool enabled, int maxRetries = 3);
     void setMemoryLimit(int limitMB);
-    
+
     /**
      * @brief 设置是否使用OpenGL硬件加速渲染
      * @param enabled true启用OpenGL，false使用软件渲染
      * @note 仅在OPENGL_ENABLE宏定义且OpenGL可用时生效
      */
     void setUseOpenGL(bool enabled);
-    
+
     /** 获取是否使用OpenGL渲染 */
     bool isUsingOpenGL() const { return m_useOpenGL && m_openglAvailable; }
-    
+
     bool takeScreenshot(const QString &filePath);
     FFmpegDecoderThread::Statistics getStatistics() const;
     void setPlaybackRate(float rate);
@@ -628,11 +673,15 @@ public slots:
 protected:
     void resizeEvent(QResizeEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
+    void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
 
 private:
     void setupConnections();
     void updateDisplay();
     void initRenderWidget();
+    void cleanupDecoder();
 
     QWidget *m_displayWidget_;               // 显示组件（QLabel或OpenGLWidget）
     QLabel *m_displayLabel_;                 // QLabel软件渲染组件（降级备用）
@@ -645,6 +694,7 @@ private:
     bool m_useOpenGL;                        // 是否尝试使用OpenGL渲染
     bool m_openglAvailable;                  // OpenGL是否可用
     bool m_firstFrameReceived;               // 是否已收到第一帧
+    bool m_isClosing;
     
 #if OPENGL_AVAILABLE
     OpenGLVideoWidget *m_glWidget_;          // OpenGL硬件加速渲染组件
