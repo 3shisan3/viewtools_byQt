@@ -18,16 +18,15 @@
 // ==================== 4K视频优化配置常量 ====================
 #define _4K_WIDTH_THRESHOLD   3840
 #define _4K_HEIGHT_THRESHOLD  2160
-#define _4K_BUFFER_SIZE       2          // 4K缓冲区大小（帧）
+#define _4K_BUFFER_SIZE       4          // 4K缓冲区大小（帧）
 #define _1080P_BUFFER_SIZE    8          // 1080p缓冲区大小
 #define _LOW_RES_BUFFER_SIZE  12         // 低分辨率缓冲区大小
 
-// 4K优化：最大等待时间系数（降低以减少队列堆积）
-#define _4K_WAIT_TIME_FACTOR  0.5f       // 4K视频等待时间为正常的一半
+// 4K优化：最大等待时间系数
+#define _4K_WAIT_TIME_FACTOR  0.5f
 
 /**
  * @brief 检查是否为4K视频
- * @return true表示当前视频分辨率达到4K标准
  */
 bool FFmpegDecoderThread::is4KVideo() const
 {
@@ -60,6 +59,8 @@ FFmpegDecoderThread::FFmpegDecoderThread(QObject *parent)
     , m_lastVideoPts(0)
     , m_firstVideoPts(-1)
     , m_startTime(0)
+    , m_pauseStartTime(0)
+    , m_totalPausedTime(0)
 {
     // 初始化FFmpeg网络模块（支持RTSP/HTTP等网络流）
     avformat_network_init();
@@ -75,7 +76,7 @@ FFmpegDecoderThread::FFmpegDecoderThread(QObject *parent)
         m_audioWriter.notifyBufferReady();
     });
 
-    qDebug() << "FFmpegDecoderThread initialized, YUV mode:" << m_useYUVMode;
+    qDebug() << "FFmpegDecoderThread initialized";
 }
 
 FFmpegDecoderThread::~FFmpegDecoderThread()
@@ -335,6 +336,10 @@ bool FFmpegDecoderThread::openMedia(const QString &url)
     m_startTime = 0;
     m_playbackRate = 1.0f;      // 重置倍速
     m_needReinitAudio = false;
+    m_seekTargetPts = -1;;      // 重置seek目标
+    m_pauseStartTime = 0;
+    m_totalPausedTime = 0;
+    m_wasPaused = false;
 
     m_stats = Statistics();
     m_stats.currentPlaybackRate = 1.0f;
@@ -499,11 +504,11 @@ void FFmpegDecoderThread::adjustBufferForResolution()
     int megaPixels = (m_video.width * m_video.height) / (1024 * 1024);
     int bufferSize;
 
-    // 4K视频使用极小缓冲区，减少内存压力
+    // 4K视频缓冲区增加到4帧，避免死锁
     if (m_video.width >= _4K_WIDTH_THRESHOLD || m_video.height >= _4K_HEIGHT_THRESHOLD)
     {
         bufferSize = _4K_BUFFER_SIZE;
-        qDebug() << "4K video detected - using ultra-small buffer:" << bufferSize << "frames";
+        qDebug() << "4K video detected - using buffer:" << bufferSize << "frames";
 
         // 4K视频强制启用快速解码选项
         if (m_video.codecCtx)
@@ -672,7 +677,7 @@ bool FFmpegDecoderThread::initVideo()
         return false;
     }
 
-    qDebug() << "Video initialized successfully -" << m_video.width << "x" << m_video.height;
+    qDebug() << "Video initialized successfully";
     return true;
 }
 
@@ -1083,11 +1088,72 @@ void FFmpegDecoderThread::cleanupResources()
     m_lastVideoPts = 0;
     m_firstVideoPts = -1;
     m_startTime = 0;
+    m_seekTargetPts = -1;
+    m_pauseStartTime = 0;
+    m_totalPausedTime = 0;
 
     // 清空帧缓冲区
     m_frameBuffer.clear();
 
     qDebug() << "Resources cleaned up";
+}
+
+// ==================== 精确Seek实现 ====================
+
+/**
+ * @brief 执行精确跳转
+ * @param targetMs 目标位置（毫秒）
+ * 
+ * 解决seek精度问题：
+ * 1. 先使用AVSEEK_FLAG_BACKWARD跳转到最近的关键帧
+ * 2. 然后解码直到达到目标PTS，丢弃中间帧
+ * 3. 只有达到目标帧后才显示
+ */
+void FFmpegDecoderThread::performPreciseSeek(qint64 targetMs)
+{
+    if (!m_formatCtx || m_video.streamIndex < 0)
+        return;
+    
+    qDebug() << "Performing precise seek to:" << targetMs << "ms";
+    
+    // 计算目标PTS（微秒）
+    qint64 targetPts = targetMs * 1000;
+    m_seekTargetPts = targetPts;
+    
+    // 转换到流时间基
+    int64_t seekTarget = av_rescale_q(targetMs, {1, 1000}, 
+                                       m_formatCtx->streams[m_video.streamIndex]->time_base);
+    
+    // 跳转到最近的关键帧
+    int ret = av_seek_frame(m_formatCtx, m_video.streamIndex, 
+                            seekTarget, AVSEEK_FLAG_BACKWARD);
+    
+    if (ret < 0)
+    {
+        qWarning() << "av_seek_frame failed, trying default stream";
+        // 尝试默认流
+        ret = av_seek_frame(m_formatCtx, -1, 
+                            targetMs * 1000, AVSEEK_FLAG_BACKWARD);
+    }
+    
+    // 清空解码器缓冲区
+    if (m_video.codecCtx)
+    {
+        avcodec_flush_buffers(m_video.codecCtx);
+    }
+    if (m_audio.codecCtx)
+    {
+        avcodec_flush_buffers(m_audio.codecCtx);
+    }
+    
+    // 清空帧缓冲区
+    m_frameBuffer.clear();
+    
+    // 重置PTS跟踪
+    m_lastVideoPts = 0;
+    m_seekDecodingActive = true;
+    
+    qDebug() << "Seek completed, will decode until target PTS:" << targetPts;
 }
 
 // ==================== 解码线程主循环 ====================
@@ -1111,7 +1177,7 @@ void FFmpegDecoderThread::run()
 
     while (m_running)
     {
-        // ========== 增加空指针检查 ==========
+        // 空指针检查
         if (!m_formatCtx)
         {
             qWarning() << "Format context is null, breaking decode loop";
@@ -1122,13 +1188,42 @@ void FFmpegDecoderThread::run()
             qWarning() << "No valid codec contexts, breaking decode loop";
             break;
         }
-        // ========== 检查结束 ==========
 
+        // ========== 暂停处理逻辑 ==========
         {
             QMutexLocker lock(&m_mutex);
+            
+            // 检测暂停状态变化
+            if (m_paused && !m_wasPaused)
+            {
+                // 刚进入暂停状态，记录暂停开始时间
+                m_pauseStartTime = av_gettime_relative();
+                m_wasPaused = true;
+                qDebug() << "Entered paused state at" << m_pauseStartTime;
+            }
+            else if (!m_paused && m_wasPaused)
+            {
+                // 刚退出暂停状态，计算总暂停时间
+                if (m_pauseStartTime > 0)
+                {
+                    qint64 pauseDuration = av_gettime_relative() - m_pauseStartTime;
+                    m_totalPausedTime += pauseDuration;
+                    qDebug() << "Exited paused state, duration:" << pauseDuration 
+                             << "us, total:" << m_totalPausedTime << "us";
+                }
+                m_pauseStartTime = 0;
+                m_wasPaused = false;
+                // 重置显示时间，避免时间累积问题
+                m_lastDisplayTime = 0;
+            }
+            
             while (m_paused && m_running && !m_seekRequested)
             {
-                m_pauseCondition.wait(&m_mutex, 100);
+                // 使用较短的超时，确保能及时响应状态变化
+                if (!m_pauseCondition.wait(&m_mutex, 50))
+                {
+                    // 超时后继续循环，检查状态
+                }
             }
             if (!m_running)
                 break;
@@ -1145,31 +1240,33 @@ void FFmpegDecoderThread::run()
         if (m_seekRequested)
         {
             QMutexLocker lock(&m_mutex);
-            int64_t target = av_rescale(m_seekPos, AV_TIME_BASE, 1000);
-            int ret = av_seek_frame(m_formatCtx, -1, target, AVSEEK_FLAG_BACKWARD);
-            if (ret >= 0)
-            {
-                if (m_video.codecCtx)
-                    avcodec_flush_buffers(m_video.codecCtx);
-                if (m_audio.codecCtx)
-                    avcodec_flush_buffers(m_audio.codecCtx);
-                m_frameBuffer.smartClear(1);
-                m_syncManager.reset();
-                m_lastVideoPts = 0;
-                firstPts = -1;
-                systemStartTime = 0;
-                emit positionChanged(m_seekPos);
-            }
+            qint64 seekTargetMs = m_seekPos;
             m_seekRequested = false;
             m_seekPos = 0;
+            
+            // 执行精确seek
+            performPreciseSeek(seekTargetMs);
+            
+            // 重置同步状态
+            m_syncManager.reset();
+            m_lastVideoPts = 0;
+            firstPts = -1;
+            systemStartTime = 0;
+            // seek后重置暂停时间累积
+            m_totalPausedTime = 0;
+            
+            // 发送位置更新信号
+            emit positionChanged(seekTargetMs);
         }
 
         // 检查缓冲区是否过满
         bool is4K = (m_video.width >= _4K_WIDTH_THRESHOLD || m_video.height >= _4K_HEIGHT_THRESHOLD);
-        int maxBufferSize = is4K ? 3 : 8;
-        if (m_useBuffer && m_frameBuffer.size() >= maxBufferSize)
+        int maxBufferSize = is4K ? (_4K_BUFFER_SIZE + 2) : 8;
+        
+        // ========== 缓冲区检查 ==========
+        if (m_useBuffer && !m_paused && m_frameBuffer.size() >= maxBufferSize)
         {
-            QThread::msleep(is4K ? 5 : 2);
+            QThread::msleep(is4K ? 3 : 2);
             continue;
         }
 
@@ -1231,7 +1328,7 @@ void FFmpegDecoderThread::run()
             decodeAudioPacket(pkt);
         }
 
-        if (m_useBuffer)
+        if (m_useBuffer && !m_paused)
         {
             OptionalFrameBuffer::VideoFrame frame = m_frameBuffer.pop(5);
             if (frame.isValid())
@@ -1252,20 +1349,26 @@ void FFmpegDecoderThread::run()
                     if (firstPts < 0)
                     {
                         firstPts = frame.pts;
-                        systemStartTime = av_gettime_relative();
+                        systemStartTime = av_gettime_relative() - m_totalPausedTime;
                         waitTime = 0;
                     }
                     else
                     {
-                        qint64 expectedTime = systemStartTime +
+                        // 考虑暂停时间
+                        qint64 expectedTime = systemStartTime + m_totalPausedTime +
                                               static_cast<qint64>((frame.pts - firstPts) / m_playbackRate);
                         qint64 currentTime = av_gettime_relative();
                         waitTime = expectedTime - currentTime;
 
                         if (waitTime > adjustedDuration * 2)
                             waitTime = adjustedDuration * 2;
-                        if (waitTime < -adjustedDuration)
-                            waitTime = -1;
+                        if (waitTime < -adjustedDuration * 3)
+                        {
+                            // 落后太多，重置时间基准
+                            firstPts = frame.pts;
+                            systemStartTime = av_gettime_relative() - m_totalPausedTime;
+                            waitTime = 0;
+                        }
                     }
                 }
 
@@ -1316,15 +1419,19 @@ void FFmpegDecoderThread::run()
                         // 发送RGB图像数据
                         emit frameReady(frame.image);
                     }
+                    // 使用微秒精度发送位置（毫秒）
                     emit positionChanged(frame.pts / 1000);
                     m_stats.totalFramesDisplayed++;
                     m_framesSinceLastFpsCalc++;
                     m_syncManager.frameDisplayed();
                 }
-                // ========== 修改部分结束 ==========
 
                 m_lastDisplayTime = av_gettime_relative();
             }
+        }
+        else if (!m_useBuffer)
+        {
+            // 非缓冲模式，在decodeVideoPacket中已处理
         }
 
         now = av_gettime_relative();
@@ -1369,15 +1476,9 @@ void FFmpegDecoderThread::run()
 
 void FFmpegDecoderThread::decodeVideoPacket(AVPacket *pkt)
 {
-    // 增加空指针检查
-    if (!m_video.codecCtx)
+    // 空指针检查
+    if (!m_video.codecCtx || !pkt)
     {
-        qWarning() << "Video codec context is null";
-        return;
-    }
-    if (!pkt)
-    {
-        qWarning() << "Packet is null";
         return;
     }
 
@@ -1408,6 +1509,28 @@ void FFmpegDecoderThread::decodeVideoPacket(AVPacket *pkt)
         }
 
         m_stats.totalFramesDecoded++;
+
+        // 计算PTS
+        qint64 pts = (frame->pts == AV_NOPTS_VALUE) ? frame->pkt_dts : frame->pts;
+        pts = av_rescale_q(pts, m_video.timeBase, {1, 1000000});
+        
+        // 处理seek后的帧过滤
+        if (m_seekDecodingActive && m_seekTargetPts > 0)
+        {
+            if (pts < m_seekTargetPts - 50000) // 小于目标50ms以上，丢弃
+            {
+                m_stats.droppedFrames++;
+                av_frame_free(&frame);
+                continue;
+            }
+            else
+            {
+                // 达到目标范围，停止过滤
+                m_seekDecodingActive = false;
+                m_seekTargetPts = -1;
+                qDebug() << "Reached seek target at PTS:" << pts;
+            }
+        }
 
         if (m_useBuffer)
             processVideoFrameBuffered(frame);
@@ -1626,11 +1749,7 @@ QImage FFmpegDecoderThread::convertYUVToImageStatic(const YUVFrameData &yuvData)
 void FFmpegDecoderThread::decodeAudioPacket(AVPacket *pkt)
 {
     // 增加空指针检查
-    if (!m_audio.codecCtx)
-    {
-        return;
-    }
-    if (!pkt)
+    if (!m_audio.codecCtx || !pkt)
     {
         return;
     }
@@ -1685,7 +1804,7 @@ void FFmpegDecoderThread::decodeAudioPacket(AVPacket *pkt)
 
         if (realSamples > 0 && m_audio.device)
         {
-            int dataSize = realSamples * 4; // 2通道 * 2字节
+            int dataSize = realSamples * 4;
             if (m_volume != 100)
             {
                 applyVolume(reinterpret_cast<int16_t *>(output), dataSize / 2);
@@ -1751,8 +1870,15 @@ void FFmpegDecoderThread::setPaused()
 {
     QMutexLocker lock(&m_mutex);
     m_paused = !m_paused;
+    
+    qDebug() << "setPaused:" << m_paused;
+    
     if (!m_paused)
+    {
+        // 恢复播放时唤醒等待线程
         m_pauseCondition.wakeAll();
+    }
+    
     emit playStateChanged(m_paused ? PlayerWidgetBase::PausedState : PlayerWidgetBase::PlayingState);
 }
 
@@ -1761,6 +1887,14 @@ void FFmpegDecoderThread::seekTo(qint64 posMs)
     QMutexLocker lock(&m_mutex);
     m_seekPos = qBound(0LL, posMs, duration());
     m_seekRequested = true;
+    
+    // 如果处于暂停状态，唤醒线程处理seek
+    if (m_paused)
+    {
+        m_pauseCondition.wakeAll();
+    }
+    
+    qDebug() << "seekTo requested:" << m_seekPos << "ms";
 }
 
 void FFmpegDecoderThread::setVolume(int volume)

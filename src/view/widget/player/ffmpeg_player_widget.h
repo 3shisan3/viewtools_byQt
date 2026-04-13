@@ -26,7 +26,7 @@ Version history
 [序号]    |   [修改日期]  |   [修改者]   |   [修改内容]
 1             2026-4-08      cjx            create
 2             2026-4-10      cjx            添加OpenGL硬件加速支持
-                                             优化4K视频解码性能
+3             2026-4-13      cjx            优化视频定位播放精度
 
 *****************************************************************/
 
@@ -543,6 +543,7 @@ private:
     void reinitAudioOutput();
 
     bool is4KVideo() const;
+    void performPreciseSeek(qint64 targetMs);
 
     // 状态变量
     QMutex m_mutex;
@@ -552,13 +553,20 @@ private:
     bool m_muted = false;
     bool m_hasAudio = false;
     bool m_seekRequested = false;
-    qint64 m_seekPos = 0;
     int m_volume = 100;
     int m_out_sample_rate = 44100;
     float m_playbackRate = 1.0f;
     bool m_needReinitAudio = false;
     int m_memoryLimitMB = 512;
-    bool m_useYUVMode = false; // 默认关闭，稳定后再开启
+    bool m_useYUVMode = false;          // 默认关闭，稳定后再开启
+    // 精确seek相关
+    qint64 m_seekPos = 0;
+    qint64 m_seekTargetPts = -1;        // seek目标PTS（微秒）
+    bool m_seekDecodingActive = false;  // 是否正在执行seek后的解码过滤
+    // 暂停时间追踪
+    qint64 m_pauseStartTime = 0;        // 暂停开始时间（微秒）
+    qint64 m_totalPausedTime = 0;       // 总暂停时长（微秒）
+    bool m_wasPaused = false;           // 上一帧的暂停状态
 
     // 重连相关
     bool m_autoReconnect = false;
