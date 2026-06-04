@@ -575,6 +575,7 @@ private:
     bool m_isReconnecting = false;
 
     // 时间信息
+    qint64 m_durationMs = 0;
     qint64 m_lastDisplayTime = 0;
     qint64 m_frameInterval = 40000;
     qint64 m_lastVideoPts = 0;

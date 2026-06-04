@@ -4,6 +4,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
+#include <QEvent>
 
 #include "event/event_dispatcher.h"
 #include "settings_manager.h"
@@ -79,7 +80,8 @@ void SsTranslationManager::load(const QString &path)
     {
         // 使用changeEvent槽，也可结合EventDispatcher自定义，看情况。
         // 触发所有窗口重新翻译 (QApplication::sendEvent(window, event);指定控件)
-        QApplication::sendEvent(QApplication::instance(), new QEvent(QEvent::LanguageChange));
+        QEvent event(QEvent::LanguageChange);
+        QApplication::sendEvent(QApplication::instance(), &event);
     }
 }
 
@@ -120,7 +122,8 @@ void SsTranslationManager::change(const QString& target)
     }
 
     // 触发所有窗口重新翻译 (QApplication::sendEvent(window, event);指定控件)
-    QApplication::sendEvent(QApplication::instance(), new QEvent(QEvent::LanguageChange));
+    QEvent event(QEvent::LanguageChange);
+    QApplication::sendEvent(QApplication::instance(), &event);
 }
 
 bool SsTranslationManager::loadFile(const QFileInfo &file)

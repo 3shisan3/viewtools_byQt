@@ -6,7 +6,7 @@
 #include <QStandardPaths>
 
 SsSettingsManager::SsSettingsManager()
-    : QSettings(QApplication::applicationDirPath() + "/config.ini", QSettings::IniFormat)
+    : QSettings(getConfigPath(), QSettings::IniFormat)
 {
 }
 

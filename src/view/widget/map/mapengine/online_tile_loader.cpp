@@ -1,5 +1,7 @@
 #include "online_tile_loader.h"
 
+#include <QMetaObject>
+#include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QPointer>
@@ -14,8 +16,6 @@ SsOnlineTileLoader::SsOnlineTileLoader(QObject *parent)
     , m_workerThread(nullptr)
     , m_networkManager(nullptr)
 {
-    // 网络管理器在主线程创建
-    m_networkManager = new QNetworkAccessManager(this);
 }
 
 SsOnlineTileLoader::~SsOnlineTileLoader()
@@ -31,7 +31,8 @@ void SsOnlineTileLoader::start()
     m_workerThread = new QThread();
     this->moveToThread(m_workerThread);
 
-    connect(m_workerThread, &QThread::started, this, []() {
+    connect(m_workerThread, &QThread::started, this, [this]() {
+        initNetworkManager();
         qDebug() << "Tile loader thread started";
     });
 
@@ -40,8 +41,8 @@ void SsOnlineTileLoader::start()
 
     connect(m_workerThread, &QThread::finished, m_workerThread, &QObject::deleteLater);
 
-    m_workerThread->start();
     m_running = true;
+    m_workerThread->start();
 }
 
 void SsOnlineTileLoader::stop()
@@ -50,8 +51,21 @@ void SsOnlineTileLoader::stop()
         return;
 
     m_running = false;
+    QThread *targetThread = QThread::currentThread();
+    if (targetThread == thread())
+    {
+        cleanupNetworkManager();
+    }
+    else
+    {
+        QMetaObject::invokeMethod(this, [this, targetThread]() {
+            cleanupNetworkManager();
+            moveToThread(targetThread);
+        }, Qt::BlockingQueuedConnection);
+    }
     m_workerThread->quit();
-    m_workerThread->wait();
+    if (targetThread != m_workerThread)
+        m_workerThread->wait();
     m_workerThread = nullptr;
 }
 
@@ -91,6 +105,9 @@ void SsOnlineTileLoader::processTileRequest(int x, int y, int z)
     if (!m_running)
         return;
 
+    if (!m_networkManager)
+        initNetworkManager();
+
     QNetworkReply *reply = createRequest(x, y, z);
     if (!reply)
         return;
@@ -106,7 +123,7 @@ void SsOnlineTileLoader::processTileRequest(int x, int y, int z)
     });
 
     // 设置超时
-    QTimer::singleShot(m_timeout, [this, safeReply]() {
+    QTimer::singleShot(m_timeout, this, [this, safeReply]() {
         if (safeReply && safeReply->isRunning())
             safeReply->abort();
     });
@@ -226,4 +243,22 @@ void SsOnlineTileLoader::handleRetry(int x, int y, int z)
         info.retryCount++;
         emit internalRequestTile(x, y, z);
     }
+}
+
+void SsOnlineTileLoader::initNetworkManager()
+{
+    if (!m_networkManager)
+        m_networkManager = new QNetworkAccessManager(this);
+}
+
+void SsOnlineTileLoader::cleanupNetworkManager()
+{
+    if (m_networkManager)
+    {
+        delete m_networkManager;
+        m_networkManager = nullptr;
+    }
+
+    QMutexLocker locker(&m_mutex);
+    m_pendingRequests.clear();
 }

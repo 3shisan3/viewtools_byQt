@@ -1,6 +1,8 @@
 #include "disk_cache_manager.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
+#include <QStandardPaths>
 
 SsDiskCacheManager::SsDiskCacheManager(const QString &cacheDir, QObject *parent)
     : QObject(parent), m_cacheDir(cacheDir)
@@ -42,6 +44,25 @@ QString SsDiskCacheManager::getCachePath(int x, int y, int z) const
 
 void SsDiskCacheManager::clearCache()
 {
+    if (!isSafeCacheDir(m_cacheDir))
+        return;
+
     QDir(m_cacheDir).removeRecursively();
     QDir().mkpath(m_cacheDir);
+}
+
+bool SsDiskCacheManager::isSafeCacheDir(const QString &path) const
+{
+    if (path.isEmpty())
+        return false;
+
+    QDir dir(path);
+    QString cleanPath = QDir::cleanPath(dir.absolutePath());
+    QString appDir = QDir::cleanPath(QCoreApplication::applicationDirPath());
+    QString appCacheDir = QDir::cleanPath(QStandardPaths::writableLocation(QStandardPaths::CacheLocation));
+
+    if (cleanPath == QDir::rootPath() || cleanPath == appDir || cleanPath == appCacheDir)
+        return false;
+
+    return cleanPath.startsWith(appDir + "/") || cleanPath.startsWith(appCacheDir + "/");
 }

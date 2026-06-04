@@ -204,26 +204,29 @@ void SsMapGraphicsView::setZoomLevel(double zoom)
             m_currentGridGroup->setVisible(false);
         
         m_zoomLevel = qBound(1.0, zoom, m_maxZoomLevel);
+        int zoomKey = qRound(m_zoomLevel);
         emit zoomLevelChange(m_zoomLevel);
 
         // 显示新层级
-        m_currentTileGroup = m_tileGroups.value(m_zoomLevel);
-        m_currentGridGroup = m_gridGroups.value(m_zoomLevel);
+        m_currentTileGroup = m_tileGroups.value(zoomKey);
+        m_currentGridGroup = m_gridGroups.value(zoomKey);
         if (!m_currentTileGroup)
         {
             m_currentTileGroup = new QGraphicsItemGroup();
             m_scene->addItem(m_currentTileGroup);
-            m_tileGroups[m_zoomLevel] = m_currentTileGroup;
+            m_tileGroups[zoomKey] = m_currentTileGroup;
         }
-        if (m_showGrid && !m_currentGridGroup)
+        if (!m_currentGridGroup)
         {
             m_currentGridGroup = new QGraphicsItemGroup();
             m_scene->addItem(m_currentGridGroup);
-            m_gridGroups[m_zoomLevel] = m_currentGridGroup;
+            m_gridGroups[zoomKey] = m_currentGridGroup;
         }
 
-        m_currentTileGroup->setVisible(true);
-        m_currentGridGroup->setVisible(true);
+        if (m_currentTileGroup)
+            m_currentTileGroup->setVisible(true);
+        if (m_currentGridGroup)
+            m_currentGridGroup->setVisible(m_showGrid);
 
         // updateViewport();
     }

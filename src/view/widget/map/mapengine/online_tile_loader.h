@@ -15,10 +15,16 @@ Version history
 #ifndef ONLINE_TILE_LOADER_H
 #define ONLINE_TILE_LOADER_H
 
+#include <QMap>
 #include <QMutex>
-#include <QNetworkAccessManager>
+#include <QMutexLocker>
 #include <QPixmap>
+#include <QString>
+#include <QStringList>
 #include <QThread>
+
+class QNetworkAccessManager;
+class QNetworkReply;
 
 struct DownTileInfo
 {
@@ -64,6 +70,8 @@ private slots:
 private:
     QNetworkReply *createRequest(int x, int y, int z);
     void handleRetry(int x, int y, int z);
+    void initNetworkManager();
+    void cleanupNetworkManager();
 
     QMutex m_mutex;
     QThread *m_workerThread; // 工作线程指针

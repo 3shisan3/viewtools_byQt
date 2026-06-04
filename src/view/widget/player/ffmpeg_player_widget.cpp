@@ -331,6 +331,7 @@ bool FFmpegDecoderThread::openMedia(const QString &url)
     m_frameBuffer.clear();
     m_isReconnecting = false;
     m_currentReconnectAttempt = 0;
+    m_durationMs = 0;
     m_lastVideoPts = 0;
     m_firstVideoPts = -1;
     m_startTime = 0;
@@ -386,6 +387,7 @@ bool FFmpegDecoderThread::openMedia(const QString &url)
     if (avformat_find_stream_info(m_formatCtx, nullptr) < 0)
     {
         emit errorOccurred(tr("No stream info"));
+        cleanupResources();
         return false;
     }
 
@@ -396,6 +398,7 @@ bool FFmpegDecoderThread::openMedia(const QString &url)
     if (!videoOk && !audioOk)
     {
         emit errorOccurred(tr("No valid streams"));
+        cleanupResources();
         return false;
     }
 
@@ -412,9 +415,9 @@ bool FFmpegDecoderThread::openMedia(const QString &url)
     }
 
     // 获取总时长
-    qint64 duration = (m_formatCtx->duration != AV_NOPTS_VALUE)
-                          ? m_formatCtx->duration * 1000 / AV_TIME_BASE : 0;
-    emit durationChanged(duration);
+    m_durationMs = (m_formatCtx->duration != AV_NOPTS_VALUE)
+                       ? m_formatCtx->duration * 1000 / AV_TIME_BASE : 0;
+    emit durationChanged(m_durationMs);
 
     // 启动音频缓冲区定时器
     if (m_audioBufferTimer)
@@ -426,7 +429,7 @@ bool FFmpegDecoderThread::openMedia(const QString &url)
     start();
 
     qDebug() << "Media opened - Video:" << videoOk << "Audio:" << m_hasAudio
-             << "Duration:" << duration << "ms";
+             << "Duration:" << m_durationMs << "ms";
     return true;
 }
 
@@ -999,12 +1002,8 @@ void FFmpegDecoderThread::close(bool waitForFinished)
         qDebug() << "Waiting for decoder thread to finish...";
         if (!wait(5000)) // 增加到5秒
         {
-            qWarning() << "Decoder thread did not finish in time, terminating...";
-            terminate();
-            if (!wait(2000))
-            {
-                qCritical() << "Failed to terminate decoder thread!";
-            }
+            qWarning() << "Decoder thread did not finish in time";
+            return;
         }
         qDebug() << "Decoder thread finished";
     }
@@ -1028,7 +1027,7 @@ void FFmpegDecoderThread::cleanupResources()
     if (m_audio.output)
     {
         m_audio.output->stop();
-        m_audio.output->deleteLater();
+        delete m_audio.output;
         m_audio.output = nullptr;
         m_audio.device = nullptr;
     }
@@ -1859,9 +1858,7 @@ void FFmpegDecoderThread::updatePerformanceStats()
 
 qint64 FFmpegDecoderThread::duration() const
 {
-    if (!m_formatCtx || m_formatCtx->duration == AV_NOPTS_VALUE)
-        return 0;
-    return m_formatCtx->duration * 1000 / AV_TIME_BASE;
+    return m_durationMs;
 }
 
 bool FFmpegDecoderThread::isPaused() const { return m_paused; }
@@ -1984,7 +1981,7 @@ void FFmpegPlayer::cleanupDecoder()
         }
 
         // 第三步：删除解码器对象
-        m_decoder_->deleteLater();
+        delete m_decoder_;
         m_decoder_ = nullptr;
 
         qDebug() << "Decoder cleaned up";

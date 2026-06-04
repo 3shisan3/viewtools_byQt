@@ -1,7 +1,7 @@
 #pragma once
 
-#include <QPixmap>
 #include <QDir>
+#include <QPixmap>
 
 class SsDiskCacheManager : public QObject
 {
@@ -18,5 +18,7 @@ public:
     QString getCachePath(int x, int y, int z) const;
 
 private:
+    bool isSafeCacheDir(const QString &path) const;
+
     QString m_cacheDir;
 };
