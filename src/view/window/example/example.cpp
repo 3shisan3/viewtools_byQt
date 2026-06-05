@@ -15,6 +15,8 @@
 #include "player/player_window.h"
 #endif
 #include "view/component/joystick_wheel.h"
+#include "view/component/status_badge.h"
+#include "view/component/toast_tip.h"
 #ifdef MAP_COMPONENT_ENABLE
 #include "view/widget/map/multi_mapview.h"
 #include "view/widget/map/layers/route_layer.h"
@@ -171,20 +173,62 @@ void ExampleWindow::extraFeatures()
         QDialog *rouletteDialog = new QDialog;
         rouletteDialog->setWindowTitle("Roulette");
         rouletteDialog->resize(400, 400);
-        
+
         // 创建布局和轮盘组件
         QVBoxLayout *dialogLayout = new QVBoxLayout(rouletteDialog);
         SsJoystickWheel *roulette1 = new SsJoystickWheel;
         SsJoystickWheel *roulette2 = new SsJoystickWheel;
         dialogLayout->addWidget(roulette1);
         dialogLayout->addWidget(roulette2);
-        
+
         // 设置为模态对话框
         rouletteDialog->setModal(true);
         rouletteDialog->exec();
-        
+
         // 对话框关闭后自动删除
         rouletteDialog->deleteLater();
+    });
+
+    QPushButton *componentBtn = new QPushButton(tr("open component test"));
+    layout->addWidget(componentBtn);
+    connect(componentBtn, &QPushButton::clicked, this, [this]() {
+        QDialog *componentDialog = new QDialog(this);
+        componentDialog->setWindowTitle("Component Test");
+        componentDialog->resize(360, 260);
+
+        QVBoxLayout *dialogLayout = new QVBoxLayout(componentDialog);
+        SsStatusBadge *statusBadge = new SsStatusBadge(componentDialog);
+        QPushButton *normalBtn = new QPushButton(tr("normal status"), componentDialog);
+        QPushButton *runningBtn = new QPushButton(tr("running status"), componentDialog);
+        QPushButton *warningBtn = new QPushButton(tr("warning toast"), componentDialog);
+        QPushButton *errorBtn = new QPushButton(tr("error toast"), componentDialog);
+
+        dialogLayout->addWidget(statusBadge);
+        dialogLayout->addWidget(normalBtn);
+        dialogLayout->addWidget(runningBtn);
+        dialogLayout->addWidget(warningBtn);
+        dialogLayout->addWidget(errorBtn);
+
+        connect(normalBtn, &QPushButton::clicked, componentDialog, [statusBadge, componentDialog]() {
+            statusBadge->setStatus(SsStatusBadge::Normal, QObject::tr("Normal"));
+            SsToastTip::showTip(componentDialog, QObject::tr("Normal status selected"), SsToastTip::Success);
+        });
+        connect(runningBtn, &QPushButton::clicked, componentDialog, [statusBadge, componentDialog]() {
+            statusBadge->setStatus(SsStatusBadge::Running, QObject::tr("Running"));
+            SsToastTip::showTip(componentDialog, QObject::tr("Running status selected"), SsToastTip::Info);
+        });
+        connect(warningBtn, &QPushButton::clicked, componentDialog, [statusBadge, componentDialog]() {
+            statusBadge->setStatus(SsStatusBadge::Warning, QObject::tr("Warning"));
+            SsToastTip::showTip(componentDialog, QObject::tr("Warning toast message"), SsToastTip::Warning);
+        });
+        connect(errorBtn, &QPushButton::clicked, componentDialog, [statusBadge, componentDialog]() {
+            statusBadge->setStatus(SsStatusBadge::Error, QObject::tr("Error"));
+            SsToastTip::showTip(componentDialog, QObject::tr("Error toast message"), SsToastTip::Error);
+        });
+
+        componentDialog->setModal(true);
+        componentDialog->exec();
+        componentDialog->deleteLater();
     });
 
 #ifdef MAP_COMPONENT_ENABLE
