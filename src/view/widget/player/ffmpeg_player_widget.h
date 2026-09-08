@@ -515,6 +515,8 @@ signals:
     void statisticsUpdated(const Statistics &stats);
     /** 播放倍速变化信号 */
     void playbackRateChanged(float rate);
+    /** 自然播放到文件末尾（EOF）结束信号，携带结束播放的来源 */
+    void mediaEnded(const QString &url);
 
 protected:
     void run() override;

@@ -51,6 +51,8 @@ signals:
     // 音量控制
     void changeMuteState();                         // 改变一次当前音量状态
     void setVolume(int volume);                     // 设置音量
+    // 播放结束（媒体自然播放到文件末尾触发，参数为结束时播放的来源路径/URL）
+    void mediaFinished(const QString &sourceUrl);   // 来源地址（本地文件路径或流地址）
 
 public slots:
     // 错误信息整合弹窗提示

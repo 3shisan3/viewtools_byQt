@@ -71,12 +71,21 @@ void SsQMediaPlayer::translateSignals()
                m_playerCore_, &PlayerWidgetBase::muteStateChanged);
     }
 #endif
+
+    // 播放到文件/流末尾（自然结束）信号转发
+    connect(m_mediaPlayer_, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
+        if (status == QMediaPlayer::EndOfMedia)
+        {
+            emit m_playerCore_->mediaFinished(m_currentSourceUrl_);
+        }
+    });
 }
 
 void SsQMediaPlayer::setupConnections()
 {
     // m_playerCore_ -> m_mediaPlayer_
     connect(m_playerCore_, &PlayerWidgetBase::setPlayerFile, this, [this](const QString &filePath) {
+        m_currentSourceUrl_ = filePath; // 记录来源，供播放结束信号携带
 #if QT_VERSION_MAJOR < 6
         m_mediaPlayer_->setMedia(QUrl::fromLocalFile(filePath));
 #else
@@ -85,6 +94,7 @@ void SsQMediaPlayer::setupConnections()
         m_mediaPlayer_->play(); // 播放文件
     });
     connect(m_playerCore_, &PlayerWidgetBase::setPlayerUrl, this, [this](const QString &url) {
+        m_currentSourceUrl_ = url; // 记录来源，供播放结束信号携带
 #if QT_VERSION_MAJOR < 6
         m_mediaPlayer_->setMedia(QUrl(url));
 #else

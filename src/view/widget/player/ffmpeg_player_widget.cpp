@@ -1169,6 +1169,7 @@ void FFmpegDecoderThread::run()
     bool isNetwork = m_currentUrl.startsWith("rtsp://") || m_currentUrl.startsWith("http://");
     m_lastStatTime = av_gettime_relative();
     int consecutiveErrors = 0;
+    bool eofReached = false;    // 是否自然播放到文件末尾（EOF）
 
     // 无音频模式的时间基准
     qint64 systemStartTime = 0;
@@ -1283,6 +1284,7 @@ void FFmpegDecoderThread::run()
                     QThread::msleep(10);
                     continue;
                 }
+                eofReached = true; // 自然播放到文件末尾
                 break;
             }
 
@@ -1466,6 +1468,14 @@ void FFmpegDecoderThread::run()
     }
 
     av_packet_free(&pkt);
+
+    // 自然播放到文件末尾（EOF）结束：通知上层，便于自动连播等后续处理
+    if (eofReached)
+    {
+        emit playStateChanged(PlayerWidgetBase::StoppedState);
+        emit mediaEnded(m_currentUrl);
+    }
+
     qDebug() << "Decoder stopped - Decoded:" << m_stats.totalFramesDecoded
              << "Displayed:" << m_stats.totalFramesDisplayed
              << "Dropped:" << m_stats.droppedFrames;
@@ -2277,6 +2287,8 @@ void FFmpegPlayer::setupConnections()
     // ========== 连接播放状态信号 ==========
     connect(m_decoder_, &FFmpegDecoderThread::playbackRateChanged, m_playerCore_, &PlayerWidgetBase::currentPlaybackRate, Qt::QueuedConnection);
     connect(m_decoder_, &FFmpegDecoderThread::playStateChanged, m_playerCore_, &PlayerWidgetBase::playStateChanged, Qt::QueuedConnection);
+    // ========== 自然播放结束（EOF）转发 ==========
+    connect(m_decoder_, &FFmpegDecoderThread::mediaEnded, m_playerCore_, &PlayerWidgetBase::mediaFinished, Qt::QueuedConnection);
 
     // ========== 连接音量信号 ==========
     connect(m_decoder_, &FFmpegDecoderThread::volumeChanged, m_playerCore_, &PlayerWidgetBase::currentVolume, Qt::QueuedConnection);

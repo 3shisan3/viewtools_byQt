@@ -15,6 +15,7 @@ Version history
 #define _QMEDIA_PLAYER_WIDGET_H
 
 #include <QMediaPlayer>
+#include <QString>
 #include <QVideoWidget>
 
 #include "base_player_widget.h"
@@ -39,6 +40,7 @@ protected:
 private:
     PlayerWidgetBase * m_playerCore_;       // 主要用于信号统一
     QMediaPlayer * m_mediaPlayer_;          // 播放处理核心
+    QString m_currentSourceUrl_;            // 当前播放来源（本地文件路径或流地址）
 };
 
 
