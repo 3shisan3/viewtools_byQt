@@ -13,6 +13,9 @@
 #include "event/event_dispatcher.h"
 #ifdef MEDIA_PLAYER_ENABLE
 #include "player/player_window.h"
+#ifdef CAN_USE_FFMPEG
+#include "transcode/transcode_window.h"
+#endif
 #endif
 #include "view/component/joystick_wheel.h"
 #include "view/component/status_badge.h"
@@ -163,6 +166,16 @@ void ExampleWindow::extraFeatures()
         playerWindow->show();
         // this->hide();
     });
+
+#ifdef CAN_USE_FFMPEG
+    QPushButton *transcodeBtn = new QPushButton(tr("open transcode window"));
+    layout->addWidget(transcodeBtn);
+    connect(transcodeBtn, &QPushButton::clicked, this, []() {
+        TranscodeWindow *transcodeWindow = new TranscodeWindow;
+        transcodeWindow->setAttribute(Qt::WA_DeleteOnClose, true);
+        transcodeWindow->show();
+    });
+#endif
 #endif
 
     // 添加轮盘组件按钮

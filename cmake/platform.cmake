@@ -112,10 +112,26 @@ if(WIN32)
             set(WINDEPLOYQT_QMLDIR "")
         endif()
         
+        # GPS/串口定位插件（plugins/position）本项目未使用；
+        # 且环境缺少 Qt6SerialPort.dll 时会报 "Cannot determine dependencies" 警告，这里直接跳过
+        set(WINDEPLOYQT_SKIP_POSITION "")
+        execute_process(
+            COMMAND ${WINDEPLOYQT} --help
+            OUTPUT_VARIABLE WINDEPLOYQT_HELP_TEXT
+            ERROR_VARIABLE WINDEPLOYQT_HELP_ERR
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        if(WINDEPLOYQT_HELP_TEXT MATCHES "skip-plugin-types")
+            set(WINDEPLOYQT_SKIP_POSITION "--skip-plugin-types" "position")
+        elseif(WINDEPLOYQT_HELP_TEXT MATCHES "exclude-plugins")
+            set(WINDEPLOYQT_SKIP_POSITION "--exclude-plugins" "position_nmea,position_positionpoll")
+        endif()
+
         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E echo "Starting Qt deployment..."
             COMMAND ${WINDEPLOYQT}
                 ${WINDEPLOYQT_QMLDIR}
+                ${WINDEPLOYQT_SKIP_POSITION}
                 "${EXECUTABLE_OUTPUT_PATH}/${PROJECT_NAME}.exe"
             COMMAND ${CMAKE_COMMAND} -E echo "Qt deployment completed"
             COMMENT "Deploying Qt runtime dependencies..."

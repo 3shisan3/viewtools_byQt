@@ -293,10 +293,66 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
             )
         endif()
 
+        # 保存"基础配置"副本：后续追加的可选编码器项失败时可回退到这里，保证构建不中断
+        set(FFMPEG_CONFIGURE_FALLBACK_OPTIONS ${FFMPEG_CONFIGURE_OPTIONS})
+
+        # ==================== 可选 H.264 编码器支持 ====================
+        # FFmpeg 自身不包含 H.264 编码器，需外挂 libx264 或使用平台编码器。
+        # 这里只做"尽力开启"：检测不到依赖时跳过；若 FFmpeg 配置失败会自动回退基础配置。
+
+        # 1) libx264（需要本地安装 x264 开发库）
+        if(FFMPEG_ENABLE_LIBX264)
+            find_package(PkgConfig QUIET)
+            set(FFMPEG_HAVE_X264 FALSE)
+            if(PKG_CONFIG_FOUND)
+                pkg_check_modules(X264 QUIET x264)
+                if(X264_FOUND)
+                    set(FFMPEG_HAVE_X264 TRUE)
+                endif()
+            endif()
+            if(NOT FFMPEG_HAVE_X264)
+                find_library(X264_LIBRARY NAMES x264 libx264)
+                find_path(X264_INCLUDE_DIR NAMES x264.h)
+                if(X264_LIBRARY AND X264_INCLUDE_DIR)
+                    set(FFMPEG_HAVE_X264 TRUE)
+                endif()
+            endif()
+
+            if(FFMPEG_HAVE_X264)
+                if(X264_INCLUDE_DIR)
+                    list(APPEND FFMPEG_CONFIGURE_OPTIONS --extra-cflags=-I${X264_INCLUDE_DIR})
+                endif()
+                if(X264_LIBRARY)
+                    get_filename_component(X264_LIB_DIR "${X264_LIBRARY}" DIRECTORY)
+                    list(APPEND FFMPEG_CONFIGURE_OPTIONS --extra-ldflags=-L${X264_LIB_DIR})
+                endif()
+                list(APPEND FFMPEG_CONFIGURE_OPTIONS --enable-gpl --enable-libx264)
+                message(STATUS "FFmpeg: H.264 encoder enabled via libx264")
+            else()
+                message(STATUS "FFmpeg: libx264 not found, skip --enable-libx264 "
+                               "(transcoder falls back to MPEG-4)")
+            endif()
+        else()
+            message(STATUS "FFmpeg: libx264 support disabled (FFMPEG_ENABLE_LIBX264=OFF)")
+        endif()
+
+        # 2) Windows Media Foundation（系统自带 h264_mf，无需额外库）
+        if(WIN32 AND FFMPEG_ENABLE_MEDIAFOUNDATION)
+            list(APPEND FFMPEG_CONFIGURE_OPTIONS --enable-mediafoundation)
+            message(STATUS "FFmpeg: trying Windows MediaFoundation encoder (h264_mf)")
+        elseif(NOT WIN32)
+            message(STATUS "FFmpeg: MediaFoundation skipped (not a Windows host)")
+        endif()
+
         # 将配置选项列表转换为字符串
         string(REPLACE ";" " " FFMPEG_CONFIGURE_OPTIONS_STR "${FFMPEG_CONFIGURE_OPTIONS}")
         string(REPLACE "\\" "/" FFMPEG_CONFIGURE_OPTIONS_STR "${FFMPEG_CONFIGURE_OPTIONS_STR}")
         set(FFMPEG_CONFIGURE_OPTIONS_STR "${FFMPEG_CONFIGURE_OPTIONS_STR}")
+
+        # 回退配置串（不含可选的编码器项）
+        string(REPLACE ";" " " FFMPEG_CONFIGURE_FALLBACK_OPTIONS_STR "${FFMPEG_CONFIGURE_FALLBACK_OPTIONS}")
+        string(REPLACE "\\" "/" FFMPEG_CONFIGURE_FALLBACK_OPTIONS_STR "${FFMPEG_CONFIGURE_FALLBACK_OPTIONS_STR}")
+        set(FFMPEG_CONFIGURE_FALLBACK_OPTIONS_STR "${FFMPEG_CONFIGURE_FALLBACK_OPTIONS_STR}")
 
         if(WIN32)
             set(FFMPEG_PRE_CONFIGURE_COMMAND 
@@ -334,8 +390,10 @@ if(NOT FFMPEG_FOUND OR FFMPEG_SOURCE_BUILD)
             # 配置前准备
             CONFIGURE_COMMAND
                 ${FFMPEG_PRE_CONFIGURE_COMMAND}
+                # 先按完整配置尝试；若因可选编码器（libx264/MediaFoundation）不支持或缺失依赖导致失败，
+                # 自动回退到不含这些选项的基础配置，保证整体构建不被中断（转码模块运行时会自动降级到 MPEG-4）
                 COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
-                        ${BASH_EXECUTABLE} -c "chmod a+x configure && bash configure ${FFMPEG_CONFIGURE_OPTIONS_STR}"
+                        ${BASH_EXECUTABLE} -c "chmod a+x configure && (bash configure ${FFMPEG_CONFIGURE_OPTIONS_STR} || bash configure ${FFMPEG_CONFIGURE_FALLBACK_OPTIONS_STR})"
 
             # 构建命令
             BUILD_COMMAND
