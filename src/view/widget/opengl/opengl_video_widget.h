@@ -99,7 +99,20 @@ public:
     void updateFrameYUV(const uint8_t *y_data, const uint8_t *u_data, const uint8_t *v_data,
                         int y_linesize, int u_linesize, int v_linesize,
                         int width, int height);
-    
+
+    /**
+     * @brief 设置画面在窗口内的映射方式
+     * @param scaleX 水平缩放（归一化设备坐标，1.0 表示铺满窗口宽度）
+     * @param scaleY 垂直缩放（1.0 表示铺满窗口高度）
+     * @param offsetX 水平平移（归一化设备坐标，-1.0 ~ 1.0）
+     * @param offsetY 垂直平移（归一化设备坐标，-1.0 ~ 1.0）
+     *
+     * 缩放模式（适应窗口/铺满裁剪/拉伸/原始尺寸）、显示比例覆盖、缩放倍率与平移
+     * 统一由上层播放控件换算成这里的 4 个参数，渲染层只负责应用，避免几何计算分散。
+     * 缩放/平移超出窗口的部分由 OpenGL 视口自动裁剪。
+     */
+    void setViewTransform(float scaleX, float scaleY, float offsetX, float offsetY);
+
     /**
      * @brief 检查OpenGL是否可用
      * @return true表示OpenGL可用，false表示不可用
@@ -243,12 +256,10 @@ private:
     void checkGLError(const char* location);
     
     /**
-     * @brief 计算变换矩阵（保持宽高比）
-     * @param frameWidth 视频帧宽度
-     * @param frameHeight 视频帧高度
+     * @brief 构建顶点变换矩阵（缩放 + 平移）
      * @return 变换矩阵
      */
-    QMatrix4x4 calculateTransformMatrix(int frameWidth, int frameHeight) const;
+    QMatrix4x4 calculateTransformMatrix() const;
 
     // ==================== OpenGL资源 ====================
     
@@ -281,6 +292,12 @@ private:
     RenderMode m_renderMode = ModeNone;  ///< 当前渲染模式
     bool m_initialized = false;          ///< OpenGL是否已初始化
     bool m_hasFrame = false;             ///< 是否有有效帧
+    // 画面映射参数（归一化设备坐标），由上层播放控件计算后下发
+    float m_viewScaleX = 1.0f;           ///< 水平缩放
+    float m_viewScaleY = 1.0f;           ///< 垂直缩放
+    float m_viewOffsetX = 0.0f;          ///< 水平平移
+    float m_viewOffsetY = 0.0f;          ///< 垂直平移
+    mutable QMutex m_viewMutex;          ///< 映射参数互斥锁（可跨线程设置）
     
     // ==================== 顶点缓冲区 ====================
     

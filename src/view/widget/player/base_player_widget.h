@@ -18,6 +18,20 @@ Version history
 
 #include <QWidget>
 
+/**
+ * @brief 画面缩放模式
+ *
+ * 参考 mpv/VLC 的 video-fit 概念，统一各播放器实现的画面适配行为：
+ * 播放窗口通过该枚举控制画面在窗口内的映射方式，具体几何计算由播放控件完成。
+ */
+enum VideoScaleMode
+{
+    FitWindow = 0,      ///< 适应窗口：完整显示画面并保持比例，多余区域留黑边（默认）
+    FillWindow,         ///< 铺满窗口：保持比例放大到铺满窗口，超出部分被裁掉，不留黑边
+    StretchToWindow,    ///< 拉伸铺满：不保持比例，强行填满整个窗口
+    OriginalSize        ///< 原始尺寸：按 1:1 像素显示（可与缩放倍率叠加）
+};
+
 class PlayerWidgetBase : public QObject
 {
     Q_OBJECT
@@ -40,6 +54,8 @@ signals:
     void currentVolume(int volume);                 // 当前音量
     void muteStateChanged(bool isMute);             // 静音状态变化
     void currentPlaybackRate(float rate);           // 当前播放倍速
+    // 视频画面几何信息（像素尺寸 + 像素宽高比，用于按显示比例渲染）
+    void videoGeometryChanged(int width, int height, int sarNum, int sarDen);
 
     // 显示窗口 -> 播放控件
     void setPlayerFile(const QString &filePath);    // 指定播放文件

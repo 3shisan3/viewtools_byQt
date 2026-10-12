@@ -7,13 +7,16 @@
 #include <QDebug>
 #include <QDir>
 #include <QHideEvent>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <QThread>
 #include <QTimer>
+#include <QWheelEvent>
 
 #include <cmath>
+#include <limits>
 
 // ==================== 4K视频优化配置常量 ====================
 #define _4K_WIDTH_THRESHOLD   3840
@@ -24,6 +27,300 @@
 
 // 4K优化：最大等待时间系数
 #define _4K_WAIT_TIME_FACTOR  0.5f
+
+// ==================== 时间戳归一化参数 ====================
+// 单个包允许的最大时间跨度：正常帧间隔约 40ms，超过 1 秒即视为时间戳跳变
+static const qint64 kTsMaxStepUs = 1000000;
+// 无正常步长可参考时的兜底步长
+static const qint64 kTsFallbackStepUs = 40000;
+// 判定"正常步长"的下限：同一条流相邻两个包的时间差不可能小于 1 毫秒，
+// 更小的值属于坏包/重复包，不能拿来当典型帧间隔
+static const qint64 kTsMinStepUs = 1000;
+// 假步长（B 帧重排造成的 3~4 倍步长）判定阈值：达到典型值的 3 倍即视为异常
+static const qint64 kTsTypicalStepMul = 3;
+
+// ==================== 时间轴归一化 ====================
+
+void TimestampNormalizer::reset()
+{
+    anchors.clear();
+    m_hasOrigin = false;
+    m_originRawUs = 0;
+}
+
+qint64 TimestampNormalizer::normalize(qint64 rawUs, Clock &clock)
+{
+    if (rawUs == AV_NOPTS_VALUE)
+        return clock.lastOutUs;     // 无时间戳：沿用上一个，避免时间轴倒退
+
+    if (!clock.anchored)
+    {
+        // 该流的第一帧（或 seek 后的第一帧）：确定归一化起点
+        clock.anchored = true;
+        clock.lastRawUs = rawUs;
+        clock.lastStepUs = 0;
+
+        if (clock.pendingOutUs >= 0)
+        {
+            // seek 后：按"目标位置 + 该帧相对目标源时间戳的偏移"锚定。
+            // 两条流用同一套换算，彼此之间原有的相对偏移（B 帧重排等）不会被抹平
+            clock.lastOutUs = clock.pendingOutUs + (rawUs - clock.pendingRawUs);
+        }
+        else if (clock.seekTargetUs >= 0)
+        {
+            // 按字节位置 seek 后落点未知：源时间戳在这两个 VOB 里会重复出现
+            // （时间轴中途归零/回绕），这里取"最接近目标"的那个锚点候选，
+            // 否则会把第二趟的画面当成第一趟的位置来显示
+            clock.lastOutUs = resolveNearest(rawUs, clock.seekTargetUs);
+        }
+        else
+        {
+            // 整条时间轴的共同起点取所有流里最早的源时间戳，
+            // 音视频之间的相对偏移（B 帧重排延迟）因此得以保留
+            if (!m_hasOrigin)
+            {
+                m_originRawUs = rawUs;
+                m_hasOrigin = true;
+            }
+            clock.lastOutUs = rawUs - m_originRawUs;
+            if (clock.lastOutUs < 0)
+                clock.lastOutUs = 0;
+        }
+        clock.pendingOutUs = -1;
+        clock.seekTargetUs = -1;
+        anchors.append(qMakePair(clock.lastOutUs, rawUs));
+        return clock.lastOutUs;
+    }
+
+    qint64 step = rawUs - clock.lastRawUs;
+    if (step <= 0 || step > kTsMaxStepUs)
+    {
+        // 源时间戳跳变（归零重来 / 33 位回绕 / 坏包 / B 帧重排回退）：不跟随跳变，
+        // 按正常步长继续推进时间轴，并记录锚点供 seek 反算
+        step = (clock.lastStepUs > 0) ? clock.lastStepUs : kTsFallbackStepUs;
+        anchors.append(qMakePair(clock.lastOutUs + step, rawUs));
+    }
+    else if (clock.lastStepUs <= 0)
+    {
+        // 第一个正常步长：确定典型帧间隔
+        clock.lastStepUs = step;
+    }
+    else if (step >= clock.lastStepUs * kTsTypicalStepMul)
+    {
+        // 步长达到典型值的 3 倍以上：同样是假步长，按正常步长推进。
+        // 典型来源是 B 帧重排 —— 封装把 dts 存成 pts-重排量之后，
+        // dts 序列会出现 "-80ms / +160ms" 这种成对的抖动（实测转码 MKV：
+        // 107963 个包里 26992 个回退），若把 +160ms 当正常步长累加，
+        // 每次回退还要再补一个偏大的兜底步长，总时长会虚高到 1.75 倍
+        step = clock.lastStepUs;
+    }
+    else if (step >= kTsMinStepUs && step < clock.lastStepUs)
+    {
+        // 典型步长取"出现过的最小正常步长"。
+        // 不能直接沿用"上一个步长"：一旦上面那种 3~4 倍的假步长被记下来，
+        // 之后每次跳变都会按它累加。加 1ms 下限，避免单个异常小步长把典型步长压到接近 0。
+        clock.lastStepUs = step;
+    }
+
+    clock.lastRawUs = rawUs;
+    clock.lastOutUs += step;
+    return clock.lastOutUs;
+}
+
+qint64 TimestampNormalizer::toSource(qint64 normalizedUs) const
+{
+    // 锚点表在播放过程中会被追加（每遇到一次时间戳跳变加一个），
+    // 音视频两条流各自追加的顺序不保证按归一化时间递增，
+    // 所以这里扫完整张表取"归一化时间不超过目标、且最大"的那个锚点，
+    // 不能一遇到更大的就 break，否则会取到偏早的锚点、反算出的源时间偏小。
+    qint64 anchorNorm = 0;
+    qint64 anchorRaw = 0;
+    bool found = false;
+    for (const QPair<qint64, qint64> &anchor : anchors)
+    {
+        if (normalizedUs >= anchor.first && (!found || anchor.first >= anchorNorm))
+        {
+            anchorNorm = anchor.first;
+            anchorRaw = anchor.second;
+            found = true;
+        }
+    }
+    if (!found && !anchors.isEmpty())
+    {
+        // 目标在第一个锚点之前：退到最早的一个锚点
+        anchorNorm = anchors.at(0).first;
+        anchorRaw = anchors.at(0).second;
+    }
+    return anchorRaw + (normalizedUs - anchorNorm);
+}
+
+qint64 TimestampNormalizer::resolveNearest(qint64 rawUs, qint64 targetUs) const
+{
+    if (anchors.isEmpty())
+        return rawUs;
+
+    // 同一个源时间戳可能对应时间轴上多个位置（中途归零/回绕），
+    // 每个锚点都能给出一个候选，取最接近 seek 目标的那一个
+    qint64 best = rawUs;
+    qint64 bestErr = -1;
+    for (const QPair<qint64, qint64> &anchor : anchors)
+    {
+        const qint64 cand = anchor.first + (rawUs - anchor.second);
+        const qint64 err = qAbs(cand - targetUs);
+        if (bestErr < 0 || err < bestErr)
+        {
+            bestErr = err;
+            best = cand;
+        }
+    }
+    return best;
+}
+
+void TimestampNormalizer::mergeAnchors(const QVector<QPair<qint64, qint64>> &other)
+{
+    // 并入后台扫描得到的锚点（时间戳跳变点）。
+    // 锚点是文件的固有结构：源时间戳在哪里归零/回绕，与播放到过哪里无关。
+    // 只靠播放过程积累的话，用户直接拖到后半段时跳变点还没被"踩"到，
+    // toSource/resolveNearest 就会把第二趟的画面当成第一趟的位置。
+    //
+    // 这里直接追加、不做去重：重复的锚点对 toSource/resolveNearest 没有影响
+    // （只是多扫几项），而去重要两层循环比对，锚点动辄上万条时会卡住整个 seek。
+    // 调用方用"扫描结果条数"做守卫，保证同一份结果只并一次。
+    anchors += other;
+}
+
+void TimestampNormalizer::rebase(qint64 normalizedUs, Clock &c1, Clock &c2, bool landingKnown)
+{
+    // 注意：这里【不裁剪】锚点表。锚点记录的是"源时间戳在哪几个位置发生过跳变"，
+    // 是整条时间轴的结构信息，播放到第二趟时还要靠它把归一化时间反算回源时间。
+    // 之前按目标位置裁剪，导致 seek 一次之后 toSource 退化成线性外推，
+    // 再次 seek 到后半段就会算出越界的源时间戳（seek 直接跳到文件尾）。
+    c1 = Clock();
+    c2 = Clock();
+
+    if (landingKnown)
+    {
+        // 按时间戳 seek：确定落点就是 toSource(normalizedUs) 对应的位置
+        const qint64 sourceUs = toSource(normalizedUs);
+        c1.pendingOutUs = c2.pendingOutUs = normalizedUs;
+        c1.pendingRawUs = c2.pendingRawUs = sourceUs;
+    }
+    else
+    {
+        // 按字节位置 seek：落点未知，第一帧用"最接近目标的锚点"反算归一化时间
+        c1.seekTargetUs = c2.seekTargetUs = normalizedUs;
+    }
+}
+
+// ==================== 内容时长扫描 ====================
+MediaDurationScanner::MediaDurationScanner(QObject *parent)
+    : QThread(parent)
+{
+}
+
+MediaDurationScanner::~MediaDurationScanner()
+{
+    cancel();
+    if (isRunning())
+        wait(3000);
+}
+
+void MediaDurationScanner::cancel()
+{
+    m_cancel.store(true);
+}
+
+void MediaDurationScanner::startScan(const QString &url)
+{
+    cancel();
+    if (isRunning())
+        wait(3000);
+
+    m_cancel.store(false);
+    m_url = url;
+    start();
+}
+
+void MediaDurationScanner::run()
+{
+    const QString url = m_url;
+    {
+        QMutexLocker lock(&m_anchorMutex);
+        m_anchors.clear();
+    }
+
+    AVFormatContext *ctx = nullptr;
+    if (avformat_open_input(&ctx, url.toUtf8().constData(), nullptr, nullptr) < 0)
+    {
+        emit durationScanned(url, 0);
+        return;
+    }
+    if (avformat_find_stream_info(ctx, nullptr) < 0)
+    {
+        avformat_close_input(&ctx);
+        emit durationScanned(url, 0);
+        return;
+    }
+
+    const int vIdx = av_find_best_stream(ctx, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+    const int aIdx = av_find_best_stream(ctx, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+    if (vIdx < 0 && aIdx < 0)
+    {
+        avformat_close_input(&ctx);
+        emit durationScanned(url, 0);
+        return;
+    }
+
+    // 与播放时同一套归一化规则：保证"进度条总长"和"播放到的位置"一致
+    TimestampNormalizer normalizer;
+    TimestampNormalizer::Clock clocks[2];
+    qint64 maxOut = 0;
+
+    AVPacket *pkt = av_packet_alloc();
+    if (!pkt)
+    {
+        avformat_close_input(&ctx);
+        emit durationScanned(url, 0);
+        return;
+    }
+
+    while (!m_cancel.load() && av_read_frame(ctx, pkt) >= 0)
+    {
+        const int slot = (pkt->stream_index == vIdx) ? 0 : ((pkt->stream_index == aIdx) ? 1 : -1);
+        if (slot >= 0)
+        {
+            int64_t raw = (pkt->dts != AV_NOPTS_VALUE) ? pkt->dts : pkt->pts;
+            if (raw != AV_NOPTS_VALUE)
+            {
+                raw = av_rescale_q(raw, ctx->streams[pkt->stream_index]->time_base, AV_TIME_BASE_Q);
+                const qint64 out = normalizer.normalize(raw, clocks[slot]);
+                if (out > maxOut)
+                    maxOut = out;
+            }
+        }
+        av_packet_unref(pkt);
+    }
+
+    av_packet_free(&pkt);
+    avformat_close_input(&ctx);
+
+    // 记录这次扫描发现的时间戳跳变点，供播放端反算使用
+    {
+        QMutexLocker lock(&m_anchorMutex);
+        m_anchors = normalizer.anchors;
+    }
+
+    if (m_cancel.load())
+        return;     // 已被取消：不发结果，避免旧文件的时长覆盖新文件
+
+    emit durationScanned(url, maxOut / 1000);   // 微秒 -> 毫秒
+}
+
+QVector<QPair<qint64, qint64>> MediaDurationScanner::scannedAnchors() const
+{
+    QMutexLocker lock(&m_anchorMutex);
+    return m_anchors;
+}
 
 /**
  * @brief 检查是否为4K视频
@@ -305,6 +602,30 @@ void FFmpegDecoderThread::reinitAudioOutput()
              << "Playback rate:" << m_playbackRate;
 }
 
+// ==================== 时间戳归一化 ====================
+
+void FFmpegDecoderThread::resetTimestampClocks()
+{
+    m_tsNorm.reset();
+    m_videoClock = TimestampNormalizer::Clock();
+    m_audioClock = TimestampNormalizer::Clock();
+}
+
+qint64 FFmpegDecoderThread::normalizeTimestamp(qint64 rawUs, TimestampNormalizer::Clock &clock)
+{
+    return m_tsNorm.normalize(rawUs, clock);
+}
+
+qint64 FFmpegDecoderThread::toSourceTimestamp(qint64 normalizedUs) const
+{
+    return m_tsNorm.toSource(normalizedUs);
+}
+
+void FFmpegDecoderThread::rebaseTimestampClocks(qint64 normalizedUs, bool landingKnown)
+{
+    m_tsNorm.rebase(normalizedUs, m_videoClock, m_audioClock, landingKnown);
+}
+
 // ==================== 媒体打开与初始化 ====================
 
 /**
@@ -332,12 +653,16 @@ bool FFmpegDecoderThread::openMedia(const QString &url)
     m_isReconnecting = false;
     m_currentReconnectAttempt = 0;
     m_durationMs = 0;
+    m_scannedDurationMs = 0;
     m_lastVideoPts = 0;
     m_firstVideoPts = -1;
     m_startTime = 0;
     m_playbackRate = 1.0f;      // 重置倍速
     m_needReinitAudio = false;
     m_seekTargetPts = -1;;      // 重置seek目标
+    m_seekDecodingActive = false;   // 清掉上一次 seek 遗留的帧过滤状态
+    m_seekFallbackUsed = false;
+    m_mergedScanAnchorCount = -1;
     m_pauseStartTime = 0;
     m_totalPausedTime = 0;
     m_wasPaused = false;
@@ -417,7 +742,34 @@ bool FFmpegDecoderThread::openMedia(const QString &url)
     // 获取总时长
     m_durationMs = (m_formatCtx->duration != AV_NOPTS_VALUE)
                        ? m_formatCtx->duration * 1000 / AV_TIME_BASE : 0;
+    resetTimestampClocks();
+
+    // 切换/打开媒体时立刻复位进度显示，避免沿用上一个媒体的总时长与位置
+    emit positionChanged(0);
     emit durationChanged(m_durationMs);
+
+    // 后台扫描真实内容时长：容器 duration 对"时间戳中途归零"的 VOB 会少算 2 倍以上
+    if (!isNetwork)
+    {
+        if (!m_durationScanner)
+        {
+            m_durationScanner = new MediaDurationScanner(this);
+            connect(m_durationScanner, &MediaDurationScanner::durationScanned, this,
+                    [this](const QString &scannedUrl, qint64 durationMs)
+                    {
+                        if (scannedUrl != m_currentUrl || durationMs <= 0)
+                            return;     // 已切到别的媒体，或没扫出来
+                        // 记录真实内容时长：按字节位置 seek 需要用它估算文件内的相对位置
+                        m_scannedDurationMs = durationMs;
+                        if (durationMs > m_durationMs)
+                        {
+                            m_durationMs = durationMs;
+                            emit durationChanged(m_durationMs);
+                        }
+                    });
+        }
+        m_durationScanner->startScan(url);
+    }
 
     // 启动音频缓冲区定时器
     if (m_audioBufferTimer)
@@ -638,6 +990,15 @@ bool FFmpegDecoderThread::initVideo()
     m_video.height = m_video.codecCtx->height;
     m_video.timeBase = m_formatCtx->streams[m_video.streamIndex]->time_base;
 
+    // 获取像素宽高比（SAR）：DVD/标清电视源（720x480、720x576）通常为非 1:1，
+    // 需结合 SAR 计算出真实显示比例（4:3 或 16:9），否则画面会被拉变形。
+    AVStream *videoStream = m_formatCtx->streams[m_video.streamIndex];
+    m_video.sampleAspect = av_guess_sample_aspect_ratio(m_formatCtx, videoStream, nullptr);
+    if (m_video.sampleAspect.num <= 0 || m_video.sampleAspect.den <= 0)
+        m_video.sampleAspect = params->sample_aspect_ratio;
+    if (m_video.sampleAspect.num <= 0 || m_video.sampleAspect.den <= 0)
+        m_video.sampleAspect = AVRational{1, 1};
+
     // 分辨率有效性检查
     if (m_video.width <= 0 || m_video.height <= 0)
     {
@@ -679,6 +1040,10 @@ bool FFmpegDecoderThread::initVideo()
         m_video.swsCtx = nullptr;
         return false;
     }
+
+    // 通知上层视频画面几何信息（含像素宽高比），用于按正确显示比例渲染/适配窗口
+    emit videoGeometryChanged(m_video.width, m_video.height,
+                              m_video.sampleAspect.num, m_video.sampleAspect.den);
 
     qDebug() << "Video initialized successfully";
     return true;
@@ -1100,41 +1465,242 @@ void FFmpegDecoderThread::cleanupResources()
 // ==================== 精确Seek实现 ====================
 
 /**
+ * @brief 按字节位置跳转
+ *
+ * 这两个 VOB 的源时间戳非单调（VTS_01_1 时间轴中途归零、VTS_01_2 出现一次 33 位回绕），
+ * 同一个时间戳在文件里会出现多次，而且解复用器索引里存在"字节位置在文件末尾、
+ * 时间戳却落在中段"的条目（探测尾部时写入的）。结果是 av_seek_frame(时间戳) 有两个坑：
+ *   1. 目标时间戳超过索引里最大的时间戳时，FFmpeg 会跳到最后一个索引条目的字节位置
+ *      再往后读 —— 那个位置就是文件尾，于是立刻读到 EOF；
+ *   2. 即使定位成功，同一个时间戳也可能对应第一趟的画面而不是目标所在的第二趟。
+ * 内容在文件里的存储顺序才是播放顺序，所以这里按字节位置跳：
+ *   先按"内容占比"估算字节位置，读一个包反算落点，落点偏后就按比例回退重试。
+ *
+ * @param targetPts 目标位置（微秒，归一化时间轴）
+ * @return true 表示已按字节定位完成；false 表示不适用/失败，调用方应退回时间戳 seek
+ */
+bool FFmpegDecoderThread::seekByBytePosition(qint64 targetPts)
+{
+    if (!m_formatCtx || !m_formatCtx->pb || m_video.streamIndex < 0)
+        return false;
+    // 只对本地文件按字节跳：网络流没有稳定的"文件大小"概念
+    if (m_currentUrl.startsWith("rtsp://") || m_currentUrl.startsWith("http://"))
+        return false;
+
+    const qint64 fileSize = avio_size(m_formatCtx->pb);
+    // 真实内容时长（后台扫描得到）。容器时长对"时间戳中途归零"的 VOB 会少算一倍以上，
+    // 用它估算会让字节位置严重偏后；没扫出来之前不做字节 seek，交给时间戳 seek + 顺序读兜底。
+    if (m_scannedDurationMs <= 0)
+        return false;
+    const qint64 totalUs = m_scannedDurationMs * 1000;
+    if (fileSize <= 0 || targetPts <= 0)
+        return false;
+
+    qint64 bytePos = static_cast<qint64>(static_cast<double>(fileSize) *
+                                         static_cast<double>(targetPts) / static_cast<double>(totalUs));
+    bytePos = qBound<qint64>(0, bytePos, fileSize - 1);
+
+    // 落点可接受的窗口
+    const qint64 maxAheadUs = 1000000;                                  // 最多允许超前 1 秒
+    const qint64 refineBehindUs = 2000000;                              // 落后 2 秒以上就修正估算
+    const qint64 acceptBehindUs = qMax<qint64>(5000000, totalUs / 100); // 兜底可接受范围（约总长的 1%）
+
+    bool converged = false;
+    for (int attempt = 0; attempt < 4; ++attempt)
+    {
+        // 部分解复用器不支持按字节定位（AVFMT_NO_BYTE_SEEK），此时返回 AVERROR(ENOSYS)，
+        // 位置不会变，必须退回按时间戳 seek，否则会拿旧位置当落点
+        if (av_seek_frame(m_formatCtx, -1, bytePos, AVSEEK_FLAG_BYTE) < 0)
+            return false;
+        if (m_video.codecCtx)
+            avcodec_flush_buffers(m_video.codecCtx);
+        if (m_audio.codecCtx)
+            avcodec_flush_buffers(m_audio.codecCtx);
+
+        // 探测落点：读第一个视频包，用锚点表反算它落在时间轴的哪个时刻
+        qint64 landedUs = -1;
+        AVPacket *probe = av_packet_alloc();
+        if (!probe)
+            break;
+        while (av_read_frame(m_formatCtx, probe) >= 0)
+        {
+            if (probe->stream_index == m_video.streamIndex)
+            {
+                int64_t raw = (probe->dts != AV_NOPTS_VALUE) ? probe->dts : probe->pts;
+                if (raw != AV_NOPTS_VALUE)
+                {
+                    raw = av_rescale_q(raw, m_video.timeBase, AV_TIME_BASE_Q);
+                    landedUs = m_tsNorm.resolveNearest(raw, targetPts);
+                    break;
+                }
+            }
+            av_packet_unref(probe);
+        }
+        av_packet_free(&probe);
+
+        if (landedUs < 0)
+        {
+            // 读不到包：估算位置多半已经落到文件末尾，往回退再试
+            bytePos = bytePos * 9 / 10;
+            continue;
+        }
+
+        const qint64 err = landedUs - targetPts;
+        if (err <= maxAheadUs && err >= -refineBehindUs)
+        {
+            converged = true;   // 落点够准，直接用
+            break;
+        }
+
+        // 按比例修正估算位置（按字节/内容大致成正比）
+        const qint64 newPos = static_cast<qint64>(static_cast<double>(bytePos) *
+                                                  static_cast<double>(targetPts) /
+                                                  static_cast<double>(landedUs));
+        const qint64 clamped = qBound<qint64>(0, newPos, fileSize - 1);
+        if (clamped == bytePos)
+        {
+            // 位置已经推到头、修正不动了。这种情况说明"按字节定位"对这个封装不成立
+            // （实测 Matroska：AVSEEK_FLAG_BYTE 返回成功但解复用器位置没动，
+            //  读到的还是旧位置的包，于是估算被一路推到文件尾）。
+            // 落点还不算太离谱就勉强采用，否则放弃，交给按时间戳 seek。
+            converged = (err <= maxAheadUs && err >= -acceptBehindUs);
+            break;
+        }
+        bytePos = clamped;
+    }
+
+    if (!converged)
+        return false;
+
+    // 用最终的字节位置真正定位一次（上面探测读掉的包不作数）
+    if (av_seek_frame(m_formatCtx, -1, bytePos, AVSEEK_FLAG_BYTE) < 0)
+        return false;
+
+    return true;
+}
+
+/**
+ * @brief 兜底跳转：从头顺序读到目标位置
+ *
+ * 按字节跳也失败时使用。源时间戳非单调的文件里，顺序读是唯一一定正确的定位方式。
+ * 归一化是确定性的，重新跑一遍就能得到与进度条一致的时间轴。
+ * 过程中只推进时间轴、不解码，到目标前 2 秒再交回正常解码流程，避免白白解码几十万帧。
+ *
+ * @return true 表示已推进到目标附近
+ */
+bool FFmpegDecoderThread::performSequentialSeek(qint64 targetMs)
+{
+    if (!m_formatCtx || m_video.streamIndex < 0)
+        return false;
+
+    // 回到文件开头并复位归一化状态
+    if (av_seek_frame(m_formatCtx, -1, 0, AVSEEK_FLAG_BACKWARD) < 0 && m_formatCtx->pb)
+        avio_seek(m_formatCtx->pb, 0, SEEK_SET);
+    resetTimestampClocks();
+    if (m_video.codecCtx)
+        avcodec_flush_buffers(m_video.codecCtx);
+    if (m_audio.codecCtx)
+        avcodec_flush_buffers(m_audio.codecCtx);
+    m_frameBuffer.clear();
+
+    const qint64 targetPts = targetMs * 1000;
+    const qint64 stopAheadUs = 2000000;     // 到目标前 2 秒就交回正常流程
+
+    AVPacket *pkt = av_packet_alloc();
+    if (!pkt)
+        return false;
+
+    bool reached = false;
+    while (m_running && av_read_frame(m_formatCtx, pkt) >= 0)
+    {
+        const int idx = pkt->stream_index;
+        if (idx == m_video.streamIndex || (idx == m_audio.streamIndex && m_hasAudio))
+        {
+            int64_t raw = (pkt->dts != AV_NOPTS_VALUE) ? pkt->dts : pkt->pts;
+            if (raw != AV_NOPTS_VALUE)
+            {
+                const bool isVideo = (idx == m_video.streamIndex);
+                raw = av_rescale_q(raw, isVideo ? m_video.timeBase : m_audio.timeBase, AV_TIME_BASE_Q);
+                const qint64 out = isVideo ? normalizeTimestamp(raw, m_videoClock)
+                                           : normalizeTimestamp(raw, m_audioClock);
+                if (isVideo && out + stopAheadUs >= targetPts)
+                {
+                    reached = true;
+                    av_packet_unref(pkt);
+                    break;
+                }
+            }
+        }
+        av_packet_unref(pkt);
+    }
+
+    av_packet_free(&pkt);
+    return reached;
+}
+
+/**
  * @brief 执行精确跳转
  * @param targetMs 目标位置（毫秒）
- * 
- * 解决seek精度问题：
- * 1. 先使用AVSEEK_FLAG_BACKWARD跳转到最近的关键帧
- * 2. 然后解码直到达到目标PTS，丢弃中间帧
- * 3. 只有达到目标帧后才显示
+ *
+ * 定位策略：
+ * 1. 优先按字节位置跳（源时间戳非单调时唯一可靠的定位方式，见 seekByBytePosition）
+ * 2. 不适用（网络流等）时退回按时间戳跳最近的关键帧
+ * 3. 之后解码直到达到目标PTS，丢弃中间帧；只有达到目标帧后才显示
+ * 4. 若还没到目标就读到 EOF，说明定位失败，由 run() 触发 performSequentialSeek 兜底
  */
 void FFmpegDecoderThread::performPreciseSeek(qint64 targetMs)
 {
     if (!m_formatCtx || m_video.streamIndex < 0)
         return;
-    
+
     qDebug() << "Performing precise seek to:" << targetMs << "ms";
-    
-    // 计算目标PTS（微秒）
+
+    // 计算目标PTS（微秒，归一化时间轴）
     qint64 targetPts = targetMs * 1000;
     m_seekTargetPts = targetPts;
-    
-    // 转换到流时间基
-    int64_t seekTarget = av_rescale_q(targetMs, {1, 1000}, 
-                                       m_formatCtx->streams[m_video.streamIndex]->time_base);
-    
-    // 跳转到最近的关键帧
-    int ret = av_seek_frame(m_formatCtx, m_video.streamIndex, 
-                            seekTarget, AVSEEK_FLAG_BACKWARD);
-    
-    if (ret < 0)
+
+    // 把后台扫描发现的时间戳跳变点并入锚点表：这些跳变点是文件的固有结构，
+    // 但只靠播放过程积累时，用户没"播放经过"跳变点就拿不到后半段的时间轴信息。
+    // 必须在下面反算源时间之前做，否则 toSource/resolveNearest 用的是残缺的表。
+    // 用"扫描结果条数"做守卫：同一份扫描结果只并一次，避免每次 seek 都追加一遍。
+    if (m_durationScanner)
     {
-        qWarning() << "av_seek_frame failed, trying default stream";
-        // 尝试默认流
-        ret = av_seek_frame(m_formatCtx, -1, 
-                            targetMs * 1000, AVSEEK_FLAG_BACKWARD);
+        const QVector<QPair<qint64, qint64>> scanned = m_durationScanner->scannedAnchors();
+        if (!scanned.isEmpty() && scanned.size() != m_mergedScanAnchorCount)
+        {
+            m_tsNorm.mergeAnchors(scanned);
+            m_mergedScanAnchorCount = scanned.size();
+        }
     }
-    
+
+    // 归一化时间 -> 源时间：源时间戳可能中途归零重来，直接按归一化值 seek 会定位不到
+    const qint64 sourceUs = toSourceTimestamp(targetPts);
+
+    // 转换到流时间基
+    int64_t seekTarget = av_rescale_q(sourceUs, AV_TIME_BASE_Q,
+                                       m_formatCtx->streams[m_video.streamIndex]->time_base);
+
+    // 优先按字节位置跳
+    const bool byByte = seekByBytePosition(targetPts);
+
+    if (!byByte)
+    {
+        // 退回按时间戳跳转到最近的关键帧
+        int ret = av_seek_frame(m_formatCtx, m_video.streamIndex,
+                                seekTarget, AVSEEK_FLAG_BACKWARD);
+
+        if (ret < 0)
+        {
+            qWarning() << "av_seek_frame failed, trying default stream";
+            // 尝试默认流
+            av_seek_frame(m_formatCtx, -1, sourceUs, AVSEEK_FLAG_BACKWARD);
+        }
+    }
+
+    // seek 后重建归一化状态，使后续解码帧落在正确的时间段上。
+    // 按字节跳时落点未知，交给第一帧用锚点表反算
+    rebaseTimestampClocks(targetPts, !byByte);
+
     // 清空解码器缓冲区
     if (m_video.codecCtx)
     {
@@ -1144,14 +1710,15 @@ void FFmpegDecoderThread::performPreciseSeek(qint64 targetMs)
     {
         avcodec_flush_buffers(m_audio.codecCtx);
     }
-    
+
     // 清空帧缓冲区
     m_frameBuffer.clear();
-    
+
     // 重置PTS跟踪
     m_lastVideoPts = 0;
     m_seekDecodingActive = true;
-    
+    m_seekFallbackUsed = false;     // 每次 seek 只允许一次顺序读兜底，避免反复重读整个文件
+
     qDebug() << "Seek completed, will decode until target PTS:" << targetPts;
 }
 
@@ -1278,6 +1845,30 @@ void FFmpegDecoderThread::run()
         {
             if (ret == AVERROR_EOF)
             {
+                // seek 之后还没到达目标就读到文件末尾：说明这次定位失败了
+                // （源时间戳非单调时 av_seek_frame 会直接跳到文件尾）。
+                // 这种情况绝不能当成"播放结束"，否则会误触发自动连播、把用户甩到下一段。
+                if (m_seekDecodingActive && m_seekTargetPts > 0 && !m_seekFallbackUsed)
+                {
+                    const qint64 pendingTargetMs = m_seekTargetPts / 1000;
+                    qWarning() << "Seek did not reach target before EOF, retrying by sequential scan:"
+                               << pendingTargetMs << "ms";
+                    m_seekFallbackUsed = true;
+                    m_seekDecodingActive = false;
+
+                    if (performSequentialSeek(pendingTargetMs))
+                    {
+                        // 已推进到目标附近，交回正常解码流程继续丢弃到目标帧
+                        m_seekTargetPts = pendingTargetMs * 1000;
+                        m_seekDecodingActive = true;
+                        m_lastVideoPts = 0;
+                        firstPts = -1;
+                        systemStartTime = 0;
+                        m_syncManager.reset();
+                        continue;
+                    }
+                }
+
                 // EOF 后等待一段时间再退出
                 if (m_frameBuffer.size() > 0)
                 {
@@ -1519,10 +2110,15 @@ void FFmpegDecoderThread::decodeVideoPacket(AVPacket *pkt)
 
         m_stats.totalFramesDecoded++;
 
-        // 计算PTS
-        qint64 pts = (frame->pts == AV_NOPTS_VALUE) ? frame->pkt_dts : frame->pts;
-        pts = av_rescale_q(pts, m_video.timeBase, {1, 1000000});
-        
+        // 计算PTS（微秒）并归一化到播放时间轴。
+        // 注意：必须在这里归一化一次，并与 m_seekTargetPts 用同一套时间轴比较；
+        // 若这里用原始 pts 去比归一化目标，seek 到后半段（源时间戳已归零/回绕的部分）时
+        // 每一帧都会被判定为"未到目标"而丢弃，表现为画面卡住不动。
+        qint64 rawPts = (frame->pts == AV_NOPTS_VALUE) ? frame->pkt_dts : frame->pts;
+        rawPts = (rawPts == AV_NOPTS_VALUE) ? AV_NOPTS_VALUE
+                                            : av_rescale_q(rawPts, m_video.timeBase, {1, 1000000});
+        const qint64 pts = normalizeTimestamp(rawPts, m_videoClock);
+
         // 处理seek后的帧过滤
         if (m_seekDecodingActive && m_seekTargetPts > 0)
         {
@@ -1542,22 +2138,18 @@ void FFmpegDecoderThread::decodeVideoPacket(AVPacket *pkt)
         }
 
         if (m_useBuffer)
-            processVideoFrameBuffered(frame);
+            processVideoFrameBuffered(frame, pts);
         else
-            processVideoFrameDirect(frame);
+            processVideoFrameDirect(frame, pts);
 
         av_frame_free(&frame);
     }
 }
 
-void FFmpegDecoderThread::processVideoFrameDirect(AVFrame *frame)
+void FFmpegDecoderThread::processVideoFrameDirect(AVFrame *frame, qint64 pts)
 {
-    // 计算PTS（微秒）
-    qint64 pts = (frame->pts == AV_NOPTS_VALUE) ? frame->pkt_dts : frame->pts;
-    AVRational timeBase = m_formatCtx->streams[m_video.streamIndex]->time_base;
-    pts = av_rescale_q(pts, timeBase, {1, 1000000});
-    if (pts < 0)
-        pts = 0;
+    // pts 由调用方（decodeVideoPacket）归一化后传入，这里不再重复计算，
+    // 否则时间轴会被推进两次
 
     // 精确计算帧持续时间
     qint64 frameDuration = m_frameInterval;
@@ -1639,17 +2231,12 @@ void FFmpegDecoderThread::processVideoFrameDirect(AVFrame *frame)
     m_lastDisplayTime = av_gettime_relative();
 }
 
-void FFmpegDecoderThread::processVideoFrameBuffered(AVFrame *frame)
+void FFmpegDecoderThread::processVideoFrameBuffered(AVFrame *frame, qint64 pts)
 {
     if (!frame)
         return;
 
-    qint64 pts = (frame->pts == AV_NOPTS_VALUE) ? frame->pkt_dts : frame->pts;
-    AVRational timeBase = m_formatCtx->streams[m_video.streamIndex]->time_base;
-    pts = av_rescale_q(pts, timeBase, {1, 1000000});
-    if (pts < 0)
-        pts = 0;
-
+    // pts 已由调用方归一化，这里只做时长估计
     // 计算帧持续时间
     qint64 frameDuration = m_frameInterval;
     if (m_lastVideoPts > 0 && pts > m_lastVideoPts)
@@ -1789,9 +2376,11 @@ void FFmpegDecoderThread::decodeAudioPacket(AVPacket *pkt)
             break;
         }
 
-        // 计算时间戳并更新音频时钟
-        qint64 pts = (frame->pts == AV_NOPTS_VALUE) ? frame->pkt_dts : frame->pts;
-        pts = av_rescale_q(pts, m_audio.timeBase, {1, 1000000});
+        // 计算时间戳并更新音频时钟（同样归一化，保证与视频共用一条时间轴）
+        qint64 rawPts = (frame->pts == AV_NOPTS_VALUE) ? frame->pkt_dts : frame->pts;
+        rawPts = (rawPts == AV_NOPTS_VALUE) ? AV_NOPTS_VALUE
+                                            : av_rescale_q(rawPts, m_audio.timeBase, {1, 1000000});
+        qint64 pts = normalizeTimestamp(rawPts, m_audioClock);
         m_syncManager.updateAudioClock(pts);
 
         // 计算输出样本数（考虑倍速影响）
@@ -1988,6 +2577,13 @@ void FFmpegPlayer::cleanupDecoder()
         {
             qDebug() << "Closing decoder...";
             m_decoder_->close(true); // 等待线程完全退出
+            // close() 内部等待超时时会直接返回且不做清理，这里再确认一次，
+            // 避免线程仍在运行时就被 delete（QThread 在运行中被销毁会直接终止进程）
+            if (m_decoder_->isRunning())
+            {
+                qWarning() << "Decoder thread still running, waiting again...";
+                m_decoder_->wait(3000);
+            }
         }
 
         // 第三步：删除解码器对象
@@ -1998,9 +2594,15 @@ void FFmpegPlayer::cleanupDecoder()
     }
 }
 
-void FFmpegPlayer::closeEvent(QCloseEvent *event)
+void FFmpegPlayer::shutdown()
 {
-    qDebug() << "FFmpegPlayer closeEvent";
+    // 释放播放资源：停止解码线程、关闭媒体文件与音频输出。
+    // 子控件不会收到 closeEvent，窗口关闭时必须由外层显式调用，
+    // 否则解码线程、文件句柄与音频设备会一直占着不释放。
+    if (m_isClosing && !m_decoder_)
+        return;     // 已经释放过
+
+    qDebug() << "FFmpegPlayer::shutdown";
     m_isClosing = true;
 
     cleanupDecoder();
@@ -2021,7 +2623,12 @@ void FFmpegPlayer::closeEvent(QCloseEvent *event)
     {
         m_displayLabel_->clear();
     }
+}
 
+void FFmpegPlayer::closeEvent(QCloseEvent *event)
+{
+    qDebug() << "FFmpegPlayer closeEvent";
+    shutdown();
     event->accept();
 }
 
@@ -2077,7 +2684,11 @@ void FFmpegPlayer::initRenderWidget()
     }
 
     m_displayWidget_->setGeometry(rect());
+    // 视频区内的滚轮缩放/拖动平移：事件先落到子显示组件，统一由事件过滤器接管
+    m_displayWidget_->installEventFilter(this);
     m_displayWidget_->show();
+
+    updateViewTransform();
 }
 
 void FFmpegPlayer::setUseOpenGL(bool enabled)
@@ -2151,11 +2762,393 @@ void FFmpegPlayer::updateDisplay()
 
     // 降级使用QLabel软件渲染
     if (m_displayLabel_)
+        updateLabelFrame();
+}
+
+void FFmpegPlayer::onVideoGeometryChanged(int width, int height, int sarNum, int sarDen)
+{
+    m_videoWidth_ = width;
+    m_videoHeight_ = height;
+
+    // 显示比例 = 像素宽比 * SAR（DVD 标清源必须考虑 SAR，否则会变形）
+    if (width > 0 && height > 0 && sarNum > 0 && sarDen > 0)
+        m_displayAspect_ = static_cast<double>(width) * sarNum / (static_cast<double>(height) * sarDen);
+    else if (width > 0 && height > 0)
+        m_displayAspect_ = static_cast<double>(width) / height;
+    else
+        m_displayAspect_ = 0.0;
+
+    // 新的画面尺寸可能让原有缩放/平移越界，这里统一重算映射
+    m_panOffset_ = QPointF();
+    updateViewTransform();
+
+    // 通知布局：推荐尺寸发生变化（便于窗口按视频比例自适应）
+    updateGeometry();
+    updateDisplay();
+}
+
+// ==================== 画面显示控制 ====================
+
+double FFmpegPlayer::displayAspect() const
+{
+    if (m_aspectOverride_ > 0.0)
+        return m_aspectOverride_;
+    return m_displayAspect_;
+}
+
+void FFmpegPlayer::setScaleMode(VideoScaleMode mode)
+{
+    if (m_scaleMode_ == mode)
+        return;
+
+    m_scaleMode_ = mode;
+    m_panOffset_ = QPointF();   // 模式切换后原有平移不再有意义
+    updateViewTransform();
+    updateDisplay();
+}
+
+void FFmpegPlayer::setAspectOverride(double aspect)
+{
+    const double normalized = (aspect > 0.0) ? aspect : 0.0;
+    if (qFuzzyCompare(m_aspectOverride_ + 1.0, normalized + 1.0))
+        return;
+
+    m_aspectOverride_ = normalized;
+    m_panOffset_ = QPointF();
+    updateViewTransform();
+    updateDisplay();
+}
+
+void FFmpegPlayer::setZoom(double zoom)
+{
+    const double clamped = qBound(kMinZoom, zoom, kMaxZoom);
+    if (qFuzzyCompare(m_zoom_, clamped))
+        return;
+
+    m_zoom_ = clamped;
+    updateViewTransform();
+    updateDisplay();
+    emit zoomChanged(m_zoom_);
+}
+
+void FFmpegPlayer::setPanOffset(const QPointF &offset)
+{
+    if (m_panOffset_ == offset)
+        return;
+
+    m_panOffset_ = offset;
+    updateViewTransform();
+    updateDisplay();
+}
+
+void FFmpegPlayer::resetView()
+{
+    const bool zoomWasChanged = !qFuzzyCompare(m_zoom_, 1.0);
+    const bool panWasChanged = !m_panOffset_.isNull();
+
+    m_zoom_ = 1.0;
+    m_panOffset_ = QPointF();
+
+    if (zoomWasChanged || panWasChanged)
     {
-        QPixmap pixmap = QPixmap::fromImage(m_currentFrame)
-                             .scaled(m_displayLabel_->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        m_displayLabel_->setPixmap(pixmap);
+        updateViewTransform();
+        updateDisplay();
     }
+    if (zoomWasChanged)
+        emit zoomChanged(m_zoom_);
+}
+
+QSize FFmpegPlayer::preferredVideoSize() const
+{
+    if (m_videoWidth_ <= 0 || m_videoHeight_ <= 0)
+        return QSize();
+
+    // 原始尺寸模式下推荐尺寸就是视频像素尺寸，其余模式按显示比例给出
+    if (m_scaleMode_ == OriginalSize)
+        return QSize(m_videoWidth_, m_videoHeight_);
+
+    const double aspect = displayAspect();
+    if (aspect <= 0.0)
+        return QSize(m_videoWidth_, m_videoHeight_);
+
+    return QSize(m_videoWidth_, qMax(1, qRound(m_videoWidth_ / aspect)));
+}
+
+void FFmpegPlayer::computeBaseScale(double &scaleX, double &scaleY) const
+{
+    scaleX = 1.0;
+    scaleY = 1.0;
+
+    const int w = width();
+    const int h = height();
+    if (w <= 0 || h <= 0)
+        return;
+
+    if (m_scaleMode_ == OriginalSize && m_videoWidth_ > 0 && m_videoHeight_ > 0)
+    {
+        // 原始尺寸：按 1:1 物理像素显示（HiDPI 下窗口逻辑尺寸需乘 dpr 才是物理像素）
+        const double dpr = devicePixelRatioF();
+        scaleX = m_videoWidth_ / (static_cast<double>(w) * dpr);
+        scaleY = m_videoHeight_ / (static_cast<double>(h) * dpr);
+        return;
+    }
+
+    const double widgetAspect = static_cast<double>(w) / h;
+    double frameAspect = displayAspect();
+    if (frameAspect <= 0.0)
+        frameAspect = widgetAspect;
+
+    switch (m_scaleMode_)
+    {
+    case StretchToWindow:
+        break;      // 保持 1:1 直接铺满，画面会变形（用户明确选择的行为）
+    case FillWindow:
+        // 铺满窗口：等比放大到覆盖整个窗口，超出的方向由渲染层裁掉
+        if (frameAspect > widgetAspect)
+            scaleX = frameAspect / widgetAspect;
+        else
+            scaleY = widgetAspect / frameAspect;
+        break;
+    case FitWindow:
+    default:
+        // 适应窗口：等比缩放到完整可见，多余方向留黑边
+        if (frameAspect > widgetAspect)
+            scaleY = widgetAspect / frameAspect;
+        else
+            scaleX = frameAspect / widgetAspect;
+        break;
+    }
+}
+
+QPointF FFmpegPlayer::clampedPan(double baseScaleX, double baseScaleY) const
+{
+    const int w = width();
+    const int h = height();
+    if (w <= 0 || h <= 0)
+        return QPointF();
+
+    // 只有画面超出窗口的方向才允许平移，且最多平移到边缘对齐
+    const double maxPanX = qMax(0.0, (baseScaleX * m_zoom_ - 1.0) * 0.5 * w);
+    const double maxPanY = qMax(0.0, (baseScaleY * m_zoom_ - 1.0) * 0.5 * h);
+    return QPointF(qBound(-maxPanX, m_panOffset_.x(), maxPanX),
+                   qBound(-maxPanY, m_panOffset_.y(), maxPanY));
+}
+
+void FFmpegPlayer::updateViewTransform()
+{
+    const int w = width();
+    const int h = height();
+    if (w <= 0 || h <= 0)
+        return;
+
+    double baseScaleX = 1.0;
+    double baseScaleY = 1.0;
+    computeBaseScale(baseScaleX, baseScaleY);
+
+    const QPointF pan = clampedPan(baseScaleX, baseScaleY);
+    if (pan != m_panOffset_)
+    {
+        m_panOffset_ = pan;
+        emit panOffsetChanged(m_panOffset_);
+    }
+
+    const double scaleX = baseScaleX * m_zoom_;
+    const double scaleY = baseScaleY * m_zoom_;
+
+    // 窗口像素 -> 归一化设备坐标；屏幕坐标 y 轴向下，NDC y 轴向上，故取负
+    const float ndcX = static_cast<float>(m_panOffset_.x() * 2.0 / w);
+    const float ndcY = static_cast<float>(-m_panOffset_.y() * 2.0 / h);
+
+#if OPENGL_AVAILABLE
+    if (m_glWidget_)
+        m_glWidget_->setViewTransform(static_cast<float>(scaleX), static_cast<float>(scaleY), ndcX, ndcY);
+#endif
+}
+
+void FFmpegPlayer::updateLabelFrame()
+{
+    if (m_currentFrame.isNull() || !m_displayLabel_)
+        return;
+
+    const QSize area = m_displayLabel_->size();
+    if (area.isEmpty())
+        return;
+
+    const double w = area.width();
+    const double h = area.height();
+    const double frameW = m_currentFrame.width();
+    const double frameH = m_currentFrame.height();
+    if (frameW <= 0.0 || frameH <= 0.0)
+        return;
+
+    double baseScaleX = 1.0;
+    double baseScaleY = 1.0;
+    computeBaseScale(baseScaleX, baseScaleY);
+
+    const double scaleX = baseScaleX * m_zoom_;
+    const double scaleY = baseScaleY * m_zoom_;
+    const double destW = w * scaleX;
+    const double destH = h * scaleY;
+    const QPointF pan = clampedPan(baseScaleX, baseScaleY);
+
+    // 画面在窗口坐标系中的位置（未裁剪前）
+    const double destX = (w - destW) * 0.5 + pan.x();
+    const double destY = (h - destH) * 0.5 + pan.y();
+
+    // 与窗口相交的可见区域（窗口坐标系）
+    const double visLeft = qMax(0.0, destX);
+    const double visTop = qMax(0.0, destY);
+    const double visRight = qMin(w, destX + destW);
+    const double visBottom = qMin(h, destY + destH);
+    if (visRight - visLeft < 1.0 || visBottom - visTop < 1.0)
+        return;
+
+    // 换算到"画面自身坐标系"后裁剪源图，避免先放大整帧再裁掉的无谓开销
+    const double sx = frameW / destW;
+    const double sy = frameH / destH;
+    QRect srcRect(qRound((visLeft - destX) * sx), qRound((visTop - destY) * sy),
+                  qMax(1, qRound((visRight - visLeft) * sx)), qMax(1, qRound((visBottom - visTop) * sy)));
+    srcRect = srcRect.intersected(QRect(0, 0, m_currentFrame.width(), m_currentFrame.height()));
+    if (srcRect.isEmpty())
+        return;
+
+    // 可见区域在超出窗口的方向上必然铺满整个窗口，其余方向居中，QLabel 的居中对齐正好匹配
+    const QSize target(qMax(1, qRound(visRight - visLeft)), qMax(1, qRound(visBottom - visTop)));
+    m_displayLabel_->setPixmap(QPixmap::fromImage(m_currentFrame.copy(srcRect))
+                                   .scaled(target, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+}
+
+void FFmpegPlayer::handleWheelZoom(QWheelEvent *event, const QPointF &posInWidget)
+{
+    if (!event)
+        return;
+
+    const int delta = event->angleDelta().y();
+    if (delta == 0)
+        return;
+
+    const double oldZoom = m_zoom_;
+    const double newZoom = qBound(kMinZoom, oldZoom * std::pow(1.0015, delta), kMaxZoom);
+    if (qFuzzyCompare(oldZoom, newZoom))
+        return;
+
+    // 以光标位置为锚点缩放：保持光标下的画面内容不动
+    const QPointF center(width() * 0.5, height() * 0.5);
+    const QPointF anchor = posInWidget - center - m_panOffset_;
+    const double ratio = newZoom / oldZoom;
+
+    m_zoom_ = newZoom;
+    m_panOffset_ = m_panOffset_ + anchor * (1.0 - ratio);
+
+    updateViewTransform();
+    updateDisplay();
+    emit zoomChanged(m_zoom_);
+}
+
+bool FFmpegPlayer::handleDragEvent(QEvent *event, const QPointF &posInWidget)
+{
+    switch (event->type())
+    {
+    case QEvent::MouseButtonPress:
+    {
+        QMouseEvent *me = static_cast<QMouseEvent *>(event);
+        if (me->button() != Qt::LeftButton)
+            return false;
+        // 只有画面超出窗口（有可平移空间）时才启动拖动，否则保持默认行为
+        double baseScaleX = 1.0;
+        double baseScaleY = 1.0;
+        computeBaseScale(baseScaleX, baseScaleY);
+        if (width() * (baseScaleX * m_zoom_ - 1.0) <= 1.0 && height() * (baseScaleY * m_zoom_ - 1.0) <= 1.0)
+            return false;
+
+        m_dragging_ = true;
+        m_dragStartPos_ = posInWidget;
+        m_dragStartPan_ = m_panOffset_;
+        return true;
+    }
+    case QEvent::MouseMove:
+    {
+        if (!m_dragging_)
+            return false;
+        m_panOffset_ = m_dragStartPan_ + (posInWidget - m_dragStartPos_);
+        updateViewTransform();
+        updateDisplay();
+        return true;
+    }
+    case QEvent::MouseButtonRelease:
+    {
+        if (!m_dragging_)
+            return false;
+        m_dragging_ = false;
+        return true;
+    }
+    default:
+        break;
+    }
+    return false;
+}
+
+bool FFmpegPlayer::eventFilter(QObject *watched, QEvent *event)
+{
+    // 子显示组件铺满整个播放控件，两者坐标系一致，可直接使用子组件的坐标
+    if (watched == m_displayWidget_)
+    {
+        switch (event->type())
+        {
+        case QEvent::Wheel:
+            handleWheelZoom(static_cast<QWheelEvent *>(event),
+                            static_cast<QWheelEvent *>(event)->position());
+            return true;
+        case QEvent::MouseButtonPress:
+            // 不拦截按下事件：必须让子组件真正收到它，Qt 才会建立隐式鼠标抓取，
+            // 后续的 move/release 才能稳定送到拖动逻辑（过滤器里吃掉按下会导致拖动失效）
+            handleDragEvent(event, static_cast<QMouseEvent *>(event)->position());
+            return false;
+        case QEvent::MouseMove:
+        case QEvent::MouseButtonRelease:
+            return handleDragEvent(event, static_cast<QMouseEvent *>(event)->position());
+        default:
+            break;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void FFmpegPlayer::wheelEvent(QWheelEvent *event)
+{
+    handleWheelZoom(event, event->position());
+    event->accept();
+}
+
+void FFmpegPlayer::mousePressEvent(QMouseEvent *event)
+{
+    if (!handleDragEvent(event, event->position()))
+        QWidget::mousePressEvent(event);
+}
+
+void FFmpegPlayer::mouseMoveEvent(QMouseEvent *event)
+{
+    if (!handleDragEvent(event, event->position()))
+        QWidget::mouseMoveEvent(event);
+}
+
+void FFmpegPlayer::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (!handleDragEvent(event, event->position()))
+        QWidget::mouseReleaseEvent(event);
+}
+
+QSize FFmpegPlayer::sizeHint() const
+{
+    const QSize preferred = preferredVideoSize();
+    if (!preferred.isEmpty())
+        return preferred;
+    return QWidget::sizeHint();
+}
+
+QSize FFmpegPlayer::minimumSizeHint() const
+{
+    return QSize(160, 90); // 允许自由缩小窗口，不再被视频原始尺寸卡住
 }
 
 void FFmpegPlayer::resizeEvent(QResizeEvent *event)
@@ -2164,6 +3157,9 @@ void FFmpegPlayer::resizeEvent(QResizeEvent *event)
     {
         m_displayWidget_->setGeometry(rect());
     }
+
+    // 窗口尺寸变化后重新计算画面映射（缩放模式/倍率/平移都依赖窗口尺寸）
+    updateViewTransform();
 
 #if OPENGL_AVAILABLE
     // OpenGL模式下不需要手动调用updateDisplay，OpenGLWidget会自动处理
@@ -2289,6 +3285,11 @@ void FFmpegPlayer::setupConnections()
     connect(m_decoder_, &FFmpegDecoderThread::playStateChanged, m_playerCore_, &PlayerWidgetBase::playStateChanged, Qt::QueuedConnection);
     // ========== 自然播放结束（EOF）转发 ==========
     connect(m_decoder_, &FFmpegDecoderThread::mediaEnded, m_playerCore_, &PlayerWidgetBase::mediaFinished, Qt::QueuedConnection);
+    // ========== 视频画面几何（含像素宽高比）转发 ==========
+    connect(m_decoder_, &FFmpegDecoderThread::videoGeometryChanged,
+            m_playerCore_, &PlayerWidgetBase::videoGeometryChanged, Qt::QueuedConnection);
+    connect(m_decoder_, &FFmpegDecoderThread::videoGeometryChanged,
+            this, &FFmpegPlayer::onVideoGeometryChanged, Qt::QueuedConnection);
 
     // ========== 连接音量信号 ==========
     connect(m_decoder_, &FFmpegDecoderThread::volumeChanged, m_playerCore_, &PlayerWidgetBase::currentVolume, Qt::QueuedConnection);

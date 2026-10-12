@@ -397,35 +397,51 @@ void OpenGLVideoWidget::initYUVTextures()
 void OpenGLVideoWidget::resizeGL(int w, int h)
 {
     // Qt已经调用了makeCurrent()
-    glViewport(0, 0, w, h);
-    
-    qDebug() << "OpenGL viewport resized to:" << w << "x" << h;
+    // 注意：w/h 是设备无关像素，帧缓冲实际是 w*dpr × h*dpr，
+    // HiDPI 下必须按 devicePixelRatio 放大视口，否则画面只占左下角一小块
+    const qreal dpr = devicePixelRatioF();
+    glViewport(0, 0, qRound(w * dpr), qRound(h * dpr));
+
+    qDebug() << "OpenGL viewport resized to:" << w << "x" << h << "dpr:" << dpr;
 }
 
-QMatrix4x4 OpenGLVideoWidget::calculateTransformMatrix(int frameWidth, int frameHeight) const
+void OpenGLVideoWidget::setViewTransform(float scaleX, float scaleY, float offsetX, float offsetY)
 {
-    if (frameWidth <= 0 || frameHeight <= 0) {
-        return QMatrix4x4();
+    {
+        QMutexLocker locker(&m_viewMutex);
+        if (qFuzzyCompare(m_viewScaleX, scaleX) && qFuzzyCompare(m_viewScaleY, scaleY) &&
+            qFuzzyCompare(m_viewOffsetX, offsetX) && qFuzzyCompare(m_viewOffsetY, offsetY))
+            return;
+
+        m_viewScaleX = scaleX;
+        m_viewScaleY = scaleY;
+        m_viewOffsetX = offsetX;
+        m_viewOffsetY = offsetY;
     }
-    
-    float widgetAspect = static_cast<float>(width()) / height();
-    float frameAspect = static_cast<float>(frameWidth) / frameHeight;
-    
+
+    update();   // 触发重绘，应用新的映射参数
+}
+
+QMatrix4x4 OpenGLVideoWidget::calculateTransformMatrix() const
+{
     float scaleX = 1.0f;
     float scaleY = 1.0f;
-    
-    if (frameAspect > widgetAspect) {
-        // 视频更宽，以宽度为准缩放高度
-        scaleY = widgetAspect / frameAspect;
-    } else {
-        // 视频更高，以高度为准缩放宽度
-        scaleX = frameAspect / widgetAspect;
+    float offsetX = 0.0f;
+    float offsetY = 0.0f;
+    {
+        QMutexLocker locker(&m_viewMutex);
+        scaleX = m_viewScaleX;
+        scaleY = m_viewScaleY;
+        offsetX = m_viewOffsetX;
+        offsetY = m_viewOffsetY;
     }
-    
+
     QMatrix4x4 transform;
     transform.setToIdentity();
+    // 先缩放后平移：T * S
+    transform.translate(offsetX, offsetY, 0.0f);
     transform.scale(scaleX, scaleY, 1.0f);
-    
+
     return transform;
 }
 
@@ -504,8 +520,8 @@ void OpenGLVideoWidget::paintGL()
         return;
     }
     
-    // ==================== 计算变换矩阵（保持宽高比）====================
-    QMatrix4x4 transform = calculateTransformMatrix(frameWidth, frameHeight);
+    // ==================== 构建画面映射矩阵（缩放模式/比例/倍率/平移由上层换算）====================
+    QMatrix4x4 transform = calculateTransformMatrix();
     
     // ==================== 选择着色器并渲染 ====================
     QOpenGLShaderProgram *program = nullptr;
