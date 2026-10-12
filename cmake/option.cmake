@@ -30,3 +30,9 @@ if (ENABLE_MAP_COMPONENT)
     option(USE_WEB_LEAFLET "using leaflet to show mapview" OFF)
     # option(USE_QML_LOCATION "using qtlocation to show mapview" ON)
 endif (ENABLE_MAP_COMPONENT)
+
+# 是否生成单文件分发包：把部署目录压缩后内嵌到启动器，产出一个可独立运行的 exe
+option(PACKAGE_SINGLE_FILE "package the deploy dir into one standalone exe (Windows only)" OFF)
+
+# 单文件包名（留空则用 <项目名>_single），产物放在 bin 目录
+set(PACKAGE_OUTPUT_NAME "" CACHE STRING "Output name of the single-file package")

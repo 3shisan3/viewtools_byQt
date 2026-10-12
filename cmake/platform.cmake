@@ -193,3 +193,15 @@ endif()
 if(ENABLE_MEDIA_PLAYER AND NOT ANDROID)
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/depend/ffmpeg_runtime.cmake)
 endif()
+
+# 补齐二级运行时依赖（windeployqt / ffmpeg 只带一级依赖，容易漏掉 libzstd 等间接库）
+if(WIN32 AND MINGW AND TOOLCHAIN_BIN_DIR)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND powershell -ExecutionPolicy Bypass -File
+                "${CMAKE_SOURCE_DIR}/script/tools/deploy_runtime_deps.ps1"
+                -BinDir "${EXECUTABLE_OUTPUT_PATH}"
+                -ToolchainBin "${TOOLCHAIN_BIN_DIR}"
+        COMMENT "Completing runtime dependencies..."
+        VERBATIM
+    )
+endif()

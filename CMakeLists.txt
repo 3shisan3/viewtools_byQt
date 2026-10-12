@@ -68,3 +68,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
 # 安装
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/install.cmake)
+
+# 打包配置（单文件分发包）
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/package.cmake)
